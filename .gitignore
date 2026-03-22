@@ -1,0 +1,22 @@
+# binaries
+*.o
+*.out
+hello
+sendrecv
+deadlock
+nonblocking
+collectives
+derived_type
+cartesian
+comm_split
+rma_putget
+cuda_aware
+jacobi2d
+
+# IDE
+.vscode/
+.idea/
+
+# temp
+*.swp
+*~
