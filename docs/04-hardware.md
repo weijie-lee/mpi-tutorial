@@ -70,7 +70,121 @@ nvcc -c cuda_aware.cu -o cuda_aware.o
 mpic++ cuda_aware.o -o cuda_aware -lcuda
 ```
 
+运行测试：
+```bash
+# 需要至少两个进程
+mpirun -np 2 ./cuda_aware
+```
+
+如果运行成功没有报错，说明你的 MPI 正确支持 CUDA-aware。
+
+### 验证 CUDA-aware 是否工作
+
+可以通过一个简单的测试来验证：
+1. 数据分配在GPU上
+2. 直接用MPI发送接收
+3. 接收方在GPU上读取结果验证正确性
+
+完整代码见 [cuda_aware.cu](../examples/04-hardware/cuda_aware.cu)，示例中 rank 0 初始化GPU数据，发送给 rank 1，rank 1 拷贝回CPU验证结果。
+
 ## 2. MPI 与 RDMA
+
+### 什么是 RDMA
+
+**RDMA** = **Remote Direct Memory Access**，远程直接内存访问：
+- 传统 TCP/IP 通信：数据要经过内核缓冲区 → 用户空间，多次内存拷贝
+- RDMA：网卡硬件直接绕过内核，直接读写远程机器的内存
+- **核心优势**：更低延迟、更高带宽、更低CPU占用
+
+### RDMA 硬件类型
+
+| 类型 | 说明 | 应用场景 |
+|------|------|----------|
+| **InfiniBand (IB)** | 专用高性能网络，传统HPC主流 | 超级计算机、AI训练集群 |
+| **RoCE v2** | RDMA over Converged Ethernet，以太网上跑RDMA | 现代数据中心、云厂商AI集群 |
+| **iWARP** | 标准以太网RDMA | 广域RDMA场景 |
+
+### MPI 如何使用 RDMA
+
+主流 MPI 都支持通过 `libverbs` 接口使用 RDMA：
+
+| MPI 实现 | RDMA 支持 | 启用方式 |
+|----------|-----------|----------|
+| OpenMPI | ✅ | 编译时 `--enable-verbs`，运行时自动检测 |
+| MVAPICH | ✅ | 原生针对InfiniBand/RDMA优化，默认启用 |
+| Intel MPI | ✅ | 自动检测RDMA设备，默认启用 |
+| MPICH | ✅ | 需要编译时启用verbs支持 |
+
+只要MPI库编译时支持了RDMA，**不需要修改你的应用代码**，MPI会自动选择最优的通信路径。
+
+### 如何检查 MPI 是否支持 RDMA
+
+```bash
+# OpenMPI 检查
+ompi_info --parsable | grep -i verbs
+# 如果输出有 MCA verbs: available = 1 就是支持
+
+# 检查可用的 BTL (Byte Transfer Layer)
+ompi_info --parsable | grep btl:
+# 看到 `openib` 或 `verbs` 说明支持RDMA
+```
+
+### 强制使用 RDMA 网络
+
+OpenMPI 可以通过参数指定使用 IB/RDMA 接口：
+
+```bash
+# 只使用 openib (IB/RDMA) 模块
+mpirun --mca btl openib,self -np 8 ./your_app
+
+# 优先使用 openib，不行再用 tcp
+mpirun --mca btl ^tcp -np 8 ./your_app
+```
+
+### RDMA 性能对比
+
+| 指标 | TCP/IP (Ethernet) | RDMA (InfiniBand/RoCE) |
+|------|-------------------|-------------------------|
+| 单消息延迟 | ~20-50 微秒 | **~3-10 微秒** |
+| 峰值带宽利用率 | ~70-80% | **~95%+** |
+| CPU 占用（通信时） | 高，内核处理消耗 | 低，网卡硬件处理 |
+| 多节点扩展性 | 一般，CPU瓶颈明显 | 好，适合大规模训练 |
+
+在多节点多GPU训练中，RDMA 能显著减少通信瓶颈，提升整体训练吞吐量。
+
+## 3. 常见问题排查
+
+### Q: 我的MPI编译时没有CUDA支持怎么办？
+
+**A:** 需要重新编译MPI，编译时指定CUDA路径。以OpenMPI为例：
+```bash
+./configure --with-cuda=/usr/local/cuda ...
+make && make install
+```
+
+或者使用你的包管理器安装预编译的支持CUDA的MPI版本（比如`openmpi-cuda`等）。
+
+### Q: 运行CUDA-aware程序报错了怎么办？
+
+常见错误和解决：
+
+1. **"CUDA device pointer not recognized"**  
+   → 说明你的MPI不支持CUDA-aware，重新编译MPI或者换支持的版本。
+
+2. **"cudaMemcpy failed after MPI communication"**  
+   → 检查是否正确绑定GPU，每个进程绑定到不同的GPU：`cudaSetDevice(rank % n_gpus)`
+
+3. **运行结果不对，数据传错了**  
+   → 检查数据类型和计数：`MPI_FLOAT`对应`float*`，`MPI_DOUBLE`对应`double*`，不要错配。
+
+### Q: 系统有RDMA设备但MPI不用怎么办？
+
+检查：
+1. MPI是否编译时支持verbs（参考上文检查方法）
+2. 是否有防火墙/ACL限制了RDMA端口
+3. 尝试强制指定BTL：`--mca btl openib,self`
+
+## 示例代码
 
 ### RDMA 是什么
 

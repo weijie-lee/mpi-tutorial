@@ -123,12 +123,82 @@ if __name__ == "__main__":
 ```
 
 运行（双节点，每节点4GPU）：
+
+**方式一：命令行直接指定主机**
 ```bash
-# 在每个节点上
 mpirun -np 8 \
     -H node1:4,node2:4 \
     python pytorch_ddp_mpi.py
 ```
+
+**方式二：使用 hostfile（推荐）**
+
+创建 `hostfile`：
+```
+node1 slots=4
+node2 slots=4
+```
+`slots` 表示这个节点能跑多少个进程（通常等于GPU数量）
+
+运行：
+```bash
+mpirun -np 8 --hostfile hostfile python pytorch_ddp_mpi.py
+```
+
+在 SLURM 集群上，通常用 `srun` 启动（它会自动调用MPI）：
+```bash
+srun -N 2 --ntasks-per-node=4 python pytorch_ddp_mpi.py
+```
+
+## 常见问题
+
+### Q: 为什么要用 MPI 启动，而不是 torchrun ？
+
+A: 两种方式都可以，各有适用场景：
+
+| 方式 | 适用场景 | 优势 | 劣势 |
+|------|----------|------|------|
+| `torchrun` | 单节点多GPU | 简单易用，PyTorch自带 | 多节点需要手动同步地址，配置麻烦 |
+| `mpirun/srun` | 多节点多GPU（HPC/集群环境） | 集群调度系统原生支持，自动分配rank、做网络探测 | 需要MPI环境，多了一层 |
+
+在有SLURM调度的AI集群上，几乎都是用 `srun` + MPI 方式启动，这是行业惯例。
+
+### Q: MPI + NCCL 多节点训练需要什么网络配置？
+
+需要满足：
+1. **所有节点之间**能**互相SSH访问**（不需要密码，配置好密钥）
+2. **NCCL 通信端口范围**开放（默认是 `1024-65535`，需要在防火墙放通）
+3. 如果用RDMA，确保IB/RoCE网络打通，节点间能RDMA通信
+4. 所有节点使用相同的`NCCL_IB_DISABLE`设置：
+   - 有IB/RoCE：默认不用改（NCCL自动启用）
+   - 只有TCP/IP：`export NCCL_IB_DISABLE=1` 强制走TCP
+
+### Q: 怎么验证我的程序真的在用 MPI + NCCL ？
+
+可以通过环境变量打开NCCL调试日志：
+
+```bash
+export NCCL_DEBUG=INFO
+mpirun -np 8 python pytorch_ddp_mpi.py
+```
+
+日志里会看到类似这样的输出，说明工作正常：
+```
+NCCL INFO Connected to all process trees...
+NCCL INFO Using network IB
+NCCL INFO Using cuda IPC
+```
+
+如果看到 `Using network IB` 说明在用RDMA/InfiniBand，`Using network Socket` 说明在用TCP/IP。
+
+### Q: 多节点训练发现NCCL初始化卡住怎么办？
+
+常见原因和解决：
+
+1. **防火墙阻挡** → 检查节点间端口是否放通
+2. **IB/RDMA 不可达** → 如果没有RDMA，试试 `export NCCL_IB_DISABLE=1`
+3. **GPU 不对齐** → 确保每个进程只绑定一个GPU，不要多个进程抢同一张GPU
+4. **节点间版本不一致** → 确保所有节点PyTorch/NCCL版本相同
 
 ## 总结分工
 
