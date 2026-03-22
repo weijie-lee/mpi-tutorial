@@ -414,7 +414,14 @@ if __name__ == "__main__":
     main()
 ```
 
-运行（双节点，每节点4GPU）：
+运行示例：
+
+**单节点 8GPU（默认环境直接运行）：**
+```bash
+mpirun -np 8 python pytorch_ddp_mpi.py
+```
+
+**双节点，每节点4GPU（总共 8GPU）：**
 
 **方式一：命令行直接指定主机**
 ```bash
@@ -427,19 +434,32 @@ mpirun -np 8 \
 
 创建 `hostfile`：
 ```
-node1 slots=4
-node2 slots=4
+node1 slots=8
 ```
 `slots` 表示这个节点能跑多少个进程（通常等于 GPU 数量）
 
-运行：
+单节点直接运行：
 ```bash
 mpirun -np 8 --hostfile hostfile python pytorch_ddp_mpi.py
 ```
 
+多节点 `hostfile` 示例：
+```
+node1 slots=8
+node2 slots=8
+```
+
+运行：
+```bash
+mpirun -np 16 --hostfile hostfile python pytorch_ddp_mpi.py
+```
+
 在 SLURM 集群上，通常用 `srun` 启动（它自动调用 MPI）：
 ```bash
-srun -N 2 --ntasks-per-node=4 python pytorch_ddp_mpi.py
+# 单节点 8GPU
+srun -N 1 --ntasks-per-node=8 python pytorch_ddp_mpi.py
+# 双节点，每节点 8GPU
+srun -N 2 --ntasks-per-node=8 python pytorch_ddp_mpi.py
 ```
 
 ## 常见问题

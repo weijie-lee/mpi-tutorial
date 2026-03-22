@@ -2,10 +2,12 @@
 """
 examples/05-pytorch/pytorch_ddp_mpi.py
 完整 PyTorch DDP 分布式训练示例，使用 MPI 启动 + NCCL 通信
-运行（双节点，每节点4GPU）：
-    mpirun -np 8 -H node1:4,node2:4 python pytorch_ddp_mpi.py
+运行（单节点 8GPU，默认环境直接运行）：
+    mpirun -np 8 python pytorch_ddp_mpi.py
+运行（双节点，每节点 8GPU）：
+    mpirun -np 16 -H node1:8,node2:8 python pytorch_ddp_mpi.py
 在 SLURM 上：
-    srun -N 2 --ntasks-per-node=4 python pytorch_ddp_mpi.py
+    srun -N 1 --ntasks-per-node=8 python pytorch_ddp_mpi.py
 """
 
 import os

@@ -31,15 +31,15 @@ mpicc -o hello hello.c -O2
 - `-np N`：启动 N 个进程
 - `-hostfile hosts`：指定哪些节点运行，一行一个节点
 - `--bind-to core`：把进程绑定到核心，提升性能
-- `-npernode 4`：每个节点启动4个进程（多节点多GPU常用）
+- `-npernode 8`：每个节点启动8个进程（多节点多GPU常用，适配我们默认环境每个节点8张GPU）
 
 示例：
 ```bash
-# 4个进程在本地运行
-mpirun -np 4 ./hello
+# 8个进程在本地运行（单节点8GPU）
+mpirun -np 8 ./hello
 
-# 两个节点，node1跑4个，node2跑4个
-mpirun -np 8 -H node1:4,node2:4 ./myapp
+# 两个节点，node1跑8个，node2跑8个
+mpirun -np 16 -H node1:8,node2:8 ./myapp
 ```
 
 ### 集群结合 Slurm 调度
