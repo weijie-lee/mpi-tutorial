@@ -5,6 +5,8 @@
 echo "Building 01-basics..."
 cd 01-basics
 mpicc -O2 -o hello hello.c
+mpicc -O2 -o timing timing.c
+mpicc -O2 -o error_handling error_handling.c
 cd ..
 
 # 核心示例
@@ -14,6 +16,7 @@ mpicc -O2 -o sendrecv sendrecv.c
 mpicc -O2 -o deadlock deadlock.c
 mpicc -O2 -o nonblocking nonblocking.c
 mpicc -O2 -o collectives collectives.c
+mpicc -O2 -o pi_monte_carlo pi_monte_carlo.c
 cd ..
 
 # 进阶示例
