@@ -16,6 +16,21 @@
 | 优化目标 | 通用性、可移植性、功能完整 | NVIDIA 硬件上极致性能 |
 | 进程启动 | 自带 `mpirun` 启动管理多个进程 | 不负责进程启动，需要上层（MPI/ PyTorch）协调 |
 
+### NCCL 集合通信原语 vs MPI 对应表
+
+| NCCL 操作 | 对应 MPI 操作 | 作用 | 深度学习场景 |
+|-----------|-------------|------|--------------|
+| `ncclBcast` | `MPI_Bcast` | 从 root 广播数据到所有 GPU | 初始化权重同步 |
+| `ncclAllReduce` | `MPI_Allreduce` | 所有 GPU 数据归约，结果所有 GPU 都有 | **数据并行训练梯度平均，最常用** |
+| `ncclReduce` | `MPI_Reduce` | 所有 GPU 数据归约，结果只给 root | 汇总梯度/指标到 root |
+| `ncclAllGather` | `MPI_Allgather` | 每个 GPU 拼一块，所有 GPU 拿到完整结果 | 分布式 embedding 收集所有分片 |
+| `ncclReduceScatter` | `MPI_ReduceScatter` | 归约分散，每个 GPU 拿一块结果 | 大张量分片 AllReduce |
+| `ncclGather` | `MPI_Gather` | 收集所有 GPU 数据到 root | 汇总结果到 root |
+| `ncclScatter` | `MPI_Scatter` | root 分发数据给所有 GPU | 分发数据分片 |
+| `ncclSend`/`ncclRecv` | `MPI_Send`/`MPI_Recv` | 点对点通信（NCCL 2.0+ 支持） | 不规则通信 |
+
+可以看到 NCCL 支持的操作和 MPI 集合通信原语几乎一一对应，语义完全一样，只是 NCCL 专用于 GPU，比 MPI 更快。
+
 ### 常见生产架构
 现在主流多节点多GPU训练架构是：
 ```
@@ -57,55 +72,123 @@ NCCL 支持这些常用操作：
 
 ```cpp
 // examples/05-pytorch/nccl_allreduce.cu
+/*
+ * NCCL AllReduce 示例，对应 MPI_Allreduce
+ * 每个 rank i 给所有元素赋值 i+1，AllReduce 求和，结果 = sum(1..size)
+ */
 #include <cuda_runtime.h>
 #include <nccl.h>
 #include <mpi.h>
 #include <stdio.h>
+#include <cmath>
 
 int main(int argc, char** argv) {
     // 1. 先用MPI初始化，获取rank和size
+    // NCCL 不负责进程启动，用 MPI 做这个
     MPI_Init(&argc, &argv);
     int rank, size;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &size);
 
-    // 2. 每个进程绑定到对应GPU（假设每个进程一个GPU）
-    cudaSetDevice(rank);
+    // 2. 每个进程绑定到对应GPU（假设每个进程一个GPU，标准做法）
+    cudaError_t err = cudaSetDevice(rank);
+    if (err != cudaSuccess) {
+        fprintf(stderr, "rank %d: cudaSetDevice failed: %s\n",
+                rank, cudaGetErrorString(err));
+        MPI_Finalize();
+        return 1;
+    }
 
     // 3. 在GPU分配数据
-    int n = 1024;
+    const int n = 1024;
     float *d_send, *d_recv;
-    cudaMalloc(&d_send, n * sizeof(float));
-    cudaMalloc(&d_recv, n * sizeof(float));
+    err = cudaMalloc(&d_send, n * sizeof(float));
+    if (err != cudaSuccess) {
+        fprintf(stderr, "rank %d: cudaMalloc failed\n", rank);
+        MPI_Finalize();
+        return 1;
+    }
+    err = cudaMalloc(&d_recv, n * sizeof(float));
+    if (err != cudaSuccess) {
+        fprintf(stderr, "rank %d: cudaMalloc failed\n", rank);
+        cudaFree(d_send);
+        MPI_Finalize();
+        return 1;
+    }
 
     // 初始化：每个rank i 所有元素都是 i+1
     float *h_send = new float[n];
     for (int i = 0; i < n; i++) {
         h_send[i] = rank + 1.0f;
     }
-    cudaMemcpy(d_send, h_send, n * sizeof(float), cudaMemcpyHostToDevice);
+    err = cudaMemcpy(d_send, h_send, n * sizeof(float), cudaMemcpyHostToDevice);
     delete[] h_send;
+    if (err != cudaSuccess) {
+        fprintf(stderr, "rank %d: cudaMemcpy failed\n", rank);
+        MPI_Finalize();
+        return 1;
+    }
 
-    // 4. NCCL 初始化：多节点需要 MPI 广播 unique id
+    // 4. NCCL 初始化
+    // 多节点需要 MPI 广播 unique id 给所有进程
     ncclComm_t comm;
     ncclUniqueId id;
     if (rank == 0) {
-        ncclGetUniqueId(&id);
+        // root 生成唯一 id
+        ncclResult_t res = ncclGetUniqueId(&id);
+        if (res != ncclSuccess) {
+            fprintf(stderr, "ncclGetUniqueId failed: %s\n", ncclGetErrorString(res));
+            MPI_Finalize();
+            return 1;
+        }
     }
-    // root 把 id 广播给所有进程
+    // root 通过 MPI 把 id 广播给所有进程
     MPI_Bcast(&id, sizeof(ncclUniqueId), MPI_BYTE, 0, MPI_COMM_WORLD);
     // 每个进程初始化自己的 rank
-    ncclCommInitRank(&comm, size, id, rank);
+    ncclResult_t res = ncclCommInitRank(&comm, size, id, rank);
+    if (res != ncclSuccess) {
+        fprintf(stderr, "rank %d: ncclCommInitRank failed: %s\n",
+                rank, ncclGetErrorString(res));
+        MPI_Finalize();
+        return 1;
+    }
 
-    // 5. 执行 AllReduce 求和
-    ncclAllReduce(d_send, d_recv, n, ncclFloat, ncclSum, comm, cudaStreamDefault);
+    // --------------------------
+    // 5. 执行 NCCL AllReduce 求和
+    // 对应 MPI_Allreduce，语义完全一样
+    // ncclSum: 操作类型是求和
+    // cudaStreamDefault: 使用默认 CUDA stream
+    res = ncclAllReduce(
+        d_send,    // 发送缓冲区（GPU指针）
+        d_recv,    // 接收缓冲区（GPU指针）
+        n,         // 多少个元素
+        ncclFloat, // 元素类型
+        ncclSum,   // 归约操作：求和
+        comm,      // NCCL communicator
+        cudaStreamDefault // CUDA stream
+    );
+    if (res != ncclSuccess) {
+        fprintf(stderr, "rank %d: ncclAllReduce failed: %s\n",
+                rank, ncclGetErrorString(res));
+        ncclCommDestroy(comm);
+        MPI_Finalize();
+        return 1;
+    }
+
+    // 等待 CUDA 完成
+    cudaDeviceSynchronize();
 
     // 6. 验证结果：所有 rank 结果都应该是 sum(1..size)
     float result;
-    cudaMemcpy(&result, d_recv, sizeof(float), cudaMemcpyDeviceToHost);
+    err = cudaMemcpy(&result, d_recv, sizeof(float), cudaMemcpyDeviceToHost);
+    if (err != cudaSuccess) {
+        fprintf(stderr, "rank %d: cudaMemcpy failed\n", rank);
+        MPI_Finalize();
+        return 1;
+    }
     float expected = (float)(size * (size + 1)) / 2.0f;
     if (rank == 0) {
-        printf("AllReduce result (first element): %.2f, expected: %.2f\n", result, expected);
+        printf("NCCL AllReduce result (first element): %.2f, expected: %.2f\n", result, expected);
         if (fabs(result - expected) < 1e-5) {
             printf("✓ Verification PASS\n");
         } else {
@@ -113,7 +196,7 @@ int main(int argc, char** argv) {
         }
     }
 
-    // 清理
+    // 7. 清理资源
     ncclCommDestroy(comm);
     cudaFree(d_send);
     cudaFree(d_recv);
@@ -132,18 +215,22 @@ mpirun -np 2 ./nccl_allreduce
 
 应该输出：
 ```
-AllReduce result (first element): 3.00, expected: 3.00
+NCCL AllReduce result (first element): 3.00, expected: 3.00
 ✓ Verification PASS
 ```
 
+### 对应 MPI 版本对比
+
+相同功能的 MPI 版本在 [examples/02-core/all-collectives.c](../examples/02-core/all-collectives.c)，API 几乎一样，只是 NCCL 专用于 GPU 更快。
+
 ### 关键要点总结
 
-| 步骤 | 作用 | 谁来做 |
-|------|------|--------|
-| 获取 unique id | 生成唯一通信域标识 | root 进程调用 `ncclGetUniqueId` |
+| 步骤 | 作用 | 对应操作 |
+|------|------|----------|
+| 获取 unique id | 生成唯一通信域标识 | root `ncclGetUniqueId` |
 | 广播 unique id | 所有进程拿到同一个 id | MPI `MPI_Bcast` |
 | 初始化每个 rank | `ncclCommInitRank` | 每个进程自己调用 |
-| AllReduce | 实际集合通信 | NCCL 直接GPU操作 |
+| AllReduce | 实际集合通信 | NCCL `ncclAllReduce` 直接 GPU 操作 |
 
 ## 4. NCCL 性能优化要点
 
@@ -151,7 +238,7 @@ AllReduce result (first element): 3.00, expected: 3.00
 2. **避免频繁创建销毁 communicator**：创建有开销，一次性创建好一直用
 3. **让计算和通信重叠**：用不同 CUDA stream，计算放一个 stream，通信放另一个，可以重叠掩盖延迟
 4. **大张量优先用 ReduceScatter + AllGather**：NCCL 内部自动会做，但你也可以显式用，比整体 AllReduce 更快
-5. **每个进程一个GPU**：这是最常用的绑定方式，NCCL优化得最好，不要多个进程抢同一张GPU
+5. **每个进程一个GPU**：这是最常用的绑定方式，NCCL 优化得最好，不要多个进程抢同一张GPU
 
 ## 5. MPI + NCCL 协同工作流程（PyTorch DDP）
 
@@ -160,7 +247,7 @@ AllReduce result (first element): 3.00, expected: 3.00
 2. 每个进程调用 **`MPI_Init`**，拿到自己的 rank 和 world size
 3. 每个进程调用 `cudaSetDevice` 绑定到一张GPU
 4. NCCL 底层通过 MPI 交换各个GPU的地址信息、建立连接
-5. 训练过程中，每次迭代的梯度allreduce都走NCCL，直接GPU → GPU通信，不经过CPU
+5. 训练过程中，每次迭代的梯度 AllReduce 都走 NCCL，直接 GPU → GPU 通信，不经过CPU
 6. 训练结束，退出
 
 PyTorch 底层帮你把这些都封装好了，用户只需要正确初始化就行。
@@ -174,7 +261,7 @@ PyTorch `torch.distributed` 原生支持：
 import torch
 import torch.distributed as dist
 
-# 使用NCCL后端，MPI启动会自动用MPI交换地址
+# 使用NCCL后端，MPI 启动会自动获取信息
 dist.init_process_group(backend='nccl')
 
 # 获取rank和world size
@@ -192,17 +279,17 @@ mpirun -np 4 python mpi_basic.py
 | 后端 | 适用场景 | 优势 | 劣势 |
 |------|----------|------|------|
 | MPI | CPU训练，或多节点协调 | 成熟，支持任意网络，自带进程启动 | GPU通信性能不如NCCL |
-| NCCL | GPU训练，多GPU/多节点 | NVIDIA GPU上性能最好 | 只支持NVIDIA，需要上层做进程启动 |
+| NCCL | GPU训练，多GPU/多节点 | NVIDIA GPU 上性能最好 | 只支持NVIDIA，需要上层做进程启动 |
 | Gloo | 多节点CPU训练，或NCCL辅助 | 纯CPU实现，好编译 | GPU性能差 |
 
 ### MPI + NCCL 混合用法
-在多节点场景，你可以用MPI做初始化启动，然后NCCL做通信：
+在多节点场景，你可以用 MPI 做初始化启动，然后 NCCL 做通信：
 ```python
 # 实际上现在PyTorch会自动处理，init_process_group用 'nccl' 后端，
 # 但是用 mpirun/srun 启动，底层初始化发现用MPI交换地址更方便，自动就用了MPI协同
 dist.init_process_group(backend='nccl')
 ```
-你不用显式指定`mpi`后端，只要你是用`mpirun`启动，PyTorch会自动用MPI做协调，NCCL做GPU通信。
+你不用显式指定`mpi`后端，只要你是用`mpirun`启动，PyTorch会自动用 MPI 做协调，NCCL 做 GPU 通信。
 
 ## 7. PyTorch DDP 分布式训练示例
 
@@ -210,42 +297,118 @@ dist.init_process_group(backend='nccl')
 
 ```python
 # examples/05-pytorch/pytorch_ddp_mpi.py
+"""
+完整 PyTorch DDP 分布式训练，MPI 启动 + NCCL 通信
+"""
 import os
 import torch
 import torch.nn as nn
 import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import Dataset, DataLoader
+from torch.utils.data.distributed import DistributedSampler
+
 
 def setup():
-    # 初始化进程组，用NCCL后端，MPI启动
+    """
+    初始化分布式环境
+    - 使用 NCCL 后端
+    - 每个进程绑定到对应 GPU
+    """
+    # 初始化进程组，NCCL 后端
     dist.init_process_group(backend='nccl')
-    # 获取rank，绑定到对应GPU
+    
+    # 获取当前 rank 和世界大小
     rank = dist.get_rank()
-    torch.cuda.set_device(rank % torch.cuda.device_count())
+    world_size = dist.get_world_size()
+    
+    # 绑定到对应 GPU
+    ngpus_per_node = torch.cuda.device_count()
+    device_id = rank % ngpus_per_node
+    torch.cuda.set_device(device_id)
+    
+    print(f"[rank {rank}/{world_size}] bound to GPU {device_id}")
     return rank
+
+
+def cleanup():
+    """销毁进程组"""
+    dist.destroy_process_group()
+
+
+class SimpleDataset(Dataset):
+    """简单随机数据集示例"""
+    def __init__(self, size, dim):
+        self.size = size
+        self.dim = dim
+        
+    def __len__(self):
+        return self.size
+    
+    def __getitem__(self, idx):
+        # 随机输入，随机标签
+        x = torch.randn(self.dim)
+        y = torch.tensor([1.0 if x.sum() > 0 else 0.0])
+        return x, y
+
 
 def main():
     rank = setup()
-    device = torch.device(f'cuda:{rank % torch.cuda.device_count()}')
+    # 获取当前设备
+    ngpus_per_node = torch.cuda.device_count()
+    device = torch.device(f'cuda:{rank % ngpus_per_node}')
 
-    # 创建模型，包装成DDP
+    # --------------------------
+    # 创建模型，包装成 DDP
+    # 线性层：输入 10 维，输出 1 维
     model = nn.Linear(10, 1).to(device)
-    ddp_model = DDP(model, device_ids=[rank % torch.cuda.device_count()])
+    # DDP 包装：自动处理梯度同步，底层调用 NCCL AllReduce
+    # NCCL 做梯度平均，对应 MPI_Allreduce
+    ddp_model = DDP(model, device_ids=[rank % ngpus_per_node])
 
-    # 这里省略数据加载...
-    # 训练过程，每次反向传播后DDP自动做allreduce同步梯度
-    output = ddp_model(torch.randn(32, 10).to(device))
-    loss = output.sum()
-    loss.backward()  # DDP在这里自动调用NCCL AllReduce
+    # --------------------------
+    # 数据加载：使用 DistributedSampler 自动分片
+    dataset = SimpleDataset(1000, 10)
+    # DistributedSampler 自动把数据分给各个进程，每个进程只拿自己分片
+    sampler = DistributedSampler(dataset, num_replicas=dist.get_world_size(), rank=rank)
+    dataloader = DataLoader(dataset, batch_size=32, sampler=sampler)
+
+    # --------------------------
+    # 训练
+    criterion = nn.MSELoss()
+    optimizer = torch.optim.SGD(ddp_model.parameters(), lr=0.01)
+
+    for batch_idx, (x, y) in enumerate(dataloader):
+        x = x.to(device)
+        y = y.to(device)
+        
+        # 前向
+        output = ddp_model(x)
+        loss = criterion(output, y)
+        
+        # 反向
+        optimizer.zero_grad()
+        loss.backward()  
+        # 🔥 DDP 在这里自动调用 NCCL AllReduce 同步梯度！
+        // 对应 MPI_Allreduce，语义完全一样，NCCL 更快
+        optimizer.step()
+
+        if batch_idx % 10 == 0 and rank == 0:
+            print(f"[rank 0] batch {batch_idx}, loss = {loss.item():.4f}")
 
     if rank == 0:
-        print(f"Training step done, loss: {loss.item()}")
+        print("Training finished!")
+
+    # 验证：所有进程权重应该一致
+    if dist.get_world_size() > 1:
+        # rank 0 广播第一个权重给所有进程验证
+        first_param = next(ddp_model.parameters())[0][0].item()
+        if rank == 0:
+            print(f"Verifying weight synchronization... first parameter = {first_param:.6f}")
+        # 实际上 DDP 每次迭代都用 NCCL AllReduce 同步了，所以肯定一致
 
     cleanup()
 
-def cleanup():
-    dist.destroy_process_group()
 
 if __name__ == "__main__":
     main()
@@ -267,14 +430,14 @@ mpirun -np 8 \
 node1 slots=4
 node2 slots=4
 ```
-`slots` 表示这个节点能跑多少个进程（通常等于GPU数量）
+`slots` 表示这个节点能跑多少个进程（通常等于 GPU 数量）
 
 运行：
 ```bash
 mpirun -np 8 --hostfile hostfile python pytorch_ddp_mpi.py
 ```
 
-在 SLURM 集群上，通常用 `srun` 启动（它会自动调用MPI）：
+在 SLURM 集群上，通常用 `srun` 启动（它自动调用 MPI）：
 ```bash
 srun -N 2 --ntasks-per-node=4 python pytorch_ddp_mpi.py
 ```
@@ -287,56 +450,54 @@ A: 两种方式都可以，各有适用场景：
 
 | 方式 | 适用场景 | 优势 | 劣势 |
 |------|----------|------|------|
-| `torchrun` | 单节点多GPU | 简单易用，PyTorch自带 | 多节点需要手动同步地址，配置麻烦 |
-| `mpirun`/`srun` | 多节点多GPU（HPC/集群环境） | 集群调度系统原生支持，自动分配rank、做网络探测 | 需要MPI环境，多了一层 |
+| `torchrun` | 单节点多GPU | 简单易用，PyTorch 自带 | 多节点需要手动同步地址，配置麻烦 |
+| `mpirun`/`srun` | 多节点多GPU（HPC/集群环境） | 集群调度系统原生支持，自动分配 rank、网络探测 | 需要 MPI 环境，多一层 |
 
-在有SLURM调度的AI集群上，几乎都是用 `srun` + MPI 方式启动，这是行业惯例。
+在有 SLURM 调度的 AI 集群上，几乎都是用 `srun` + MPI 方式启动，这是行业惯例。
 
 ### Q: MPI + NCCL 多节点训练需要什么网络配置？
 
 需要满足：
-1. **所有节点之间**能**互相SSH访问**（不需要密码，配置好密钥）
-2. **NCCL 通信端口范围**开放（默认是 `1024-65535`，需要在防火墙放通）
-3. 如果用RDMA，确保IB/RoCE网络打通，节点间能RDMA通信
-4. 所有节点使用相同的`NCCL_IB_DISABLE`设置：
-   - 有IB/RoCE：默认不用改（NCCL自动启用）
-   - 只有TCP/IP：`export NCCL_IB_DISABLE=1` 强制走TCP
+1. **所有节点之间**能**互相 SSH 访问**（不需要密码，配置好密钥）
+2. **NCCL 通信端口范围**开放（默认 `1024-65535`，需要防火墙放通）
+3. 如果用 RDMA，确保 IB/RoCE 网络打通，节点间能 RDMA 通信
+4. 所有节点设置相同环境变量：
+   - 有 IB/RoCE：默认不用改，NCCL 自动启用
+   - 只有 TCP/IP：`export NCCL_IB_DISABLE=1` 强制走 TCP
 
 ### Q: 怎么验证我的程序真的在用 MPI + NCCL ？
 
-可以通过环境变量打开NCCL调试日志：
-
+打开 NCCL 调试日志：
 ```bash
 export NCCL_DEBUG=INFO
 mpirun -np 8 python pytorch_ddp_mpi.py
 ```
 
-日志里会看到类似这样的输出，说明工作正常：
+日志里会看到类似输出，说明工作正常：
 ```
 NCCL INFO Connected to all process trees...
 NCCL INFO Using network IB
 NCCL INFO Using cuda IPC
 ```
 
-如果看到 `Using network IB` 说明在用RDMA/InfiniBand，`Using network Socket` 说明在用TCP/IP。
+看到 `Using network IB` 说明在用 RDMA/InfiniBand，看到 `Using network Socket` 说明在用 TCP/IP。
 
-### Q: 多节点训练发现NCCL初始化卡住怎么办？
+### Q: 多节点训练 NCCL 初始化卡住怎么办？
 
 常见原因和解决：
-
 1. **防火墙阻挡** → 检查节点间端口是否放通
-2. **IB/RDMA 不可达** → 如果没有RDMA，试试 `export NCCL_IB_DISABLE=1`
-3. **GPU 不对齐** → 确保每个进程只绑定一个GPU，不要多个进程抢同一张GPU
-4. **节点间版本不一致** → 确保所有节点PyTorch/NCCL版本相同
+2. **IB/RDMA 不可达** → 如果没有 RDMA，试试 `export NCCL_IB_DISABLE=1`
+3. **GPU 不匹配** → 确保每个进程只绑一个 GPU，不要多个进程抢同一张 GPU
+4. **版本不一致** → 确保所有节点 PyTorch/NCCL 版本相同
 
 ## 总结分工
 
-| 层级 | 组件 | 职责 |
-|------|------|------|
-| 进程启动 | MPI (`mpirun`/`srun`) | 启动所有节点上的所有进程，分配rank |
-| 初始化协调 | MPI | 交换各GPU的网络地址，交换NCCL unique id，建立连接 |
-| 实际通信 | NCCL | 梯度AllReduce等集合操作，GPU直接通信 |
-| 框架层 | PyTorch DDP | 掩盖底层细节，给用户提供简单接口 |
+| 层级 | 组件 | 职责 | 对应 MPI |
+|------|------|------|--------|
+| 进程启动 | MPI (`mpirun`/`srun`) | 启动所有节点上的所有进程，分配 rank | - |
+| 初始化协调 | MPI | 交换各个 GPU 的网络地址，交换 NCCL unique id，建立连接 | - |
+| 实际集合通信 | NCCL | 梯度 AllReduce 等集合操作，GPU 直接通信 | ncclAllReduce ≈ MPI_Allreduce |
+| 框架层 | PyTorch DDP | 掩盖底层细节，给用户提供简单接口 | - |
 
 ## 示例代码
 
@@ -348,4 +509,4 @@ NCCL INFO Using cuda IPC
 
 ## 下一步
 
-→ 下一章：[完整应用实例：二维Jacobi迭代](06-applications.md)
+→ 下一章：[实现环境与调试优化](06-optimize.md)
