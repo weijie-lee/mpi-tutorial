@@ -13,14 +13,16 @@ mpi-tutorial/
 │   ├── 03-advanced.md  # 进阶核心主题
 │   ├── 04-hardware.md  # GPU 与 RDMA 支持
 │   ├── 05-stack.md     # NCCL 与 PyTorch 结合
-│   └── 06-optimize.md  # 实现环境与调试优化
+│   ├── 06-optimize.md  # 实现环境与调试优化
+│   └── 07-rdma-verbs.md # RDMA Verbs 原生编程入门
 └── examples/           # 可运行示例代码
     ├── 01-basics/      # 基础示例
     ├── 02-core/        # 核心通信示例
     ├── 03-advanced/    # 进阶示例
     ├── 04-hardware/    # GPU/RDMA 示例
     ├── 05-pytorch/     # PyTorch 示例
-    └── 06-applications/# 完整应用
+    ├── 06-applications/# 完整应用
+    └── 07-rdma-verbs/  # RDMA Verbs 编程示例
 ```
 
 ## 学习路径
@@ -37,6 +39,7 @@ mpi-tutorial/
 - CUDA（可选，GPU 示例需要）：CUDA 11+
 - PyTorch（可选，深度学习示例需要）：PyTorch 1.10+
 - NCCL（可选，PyTorch 多 GPU 示例需要）
+- libibverbs-dev（可选，RDMA Verbs 编程示例需要）
 
 ## 快速开始
 
