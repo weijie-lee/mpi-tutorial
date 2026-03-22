@@ -108,11 +108,100 @@ MPI 提供了封装好的编译器 wrappers，自动链接头文件和库：
 
 不需要手动链接 `-lmpi`，wrapper 已经处理好了。
 
-### 运行命令
-`mpirun` 是 MPI 程序的启动器，常用参数：
-- `-np N`：启动 N 个 MPI 进程
-- `--hostfile hosts`：指定在哪些机器上运行（多节点时用）
-- `--map-by socket:pe=4`：控制进程绑定（性能调优常用）
+### 运行命令：mpirun 完整用法
+
+`mpirun`（也叫 `mpiexec`）是 MPI 程序的启动器，负责在多个节点上启动所有 MPI 进程并建立通信。
+
+#### 基本用法
+
+**单节点运行**（我们默认环境单节点有 8 张 GPU，通常一个 GPU 对应一个进程）：
+```bash
+# 启动 1 个进程（测试用）
+mpirun -np 1 ./hello
+
+# 启动 4 个进程（单节点内）
+mpirun -np 4 ./hello
+
+# 启动 8 个进程（占满单节点的所有 GPU，最常用）
+mpirun -np 8 ./hello
+```
+
+**多节点运行**（多个机器一起跑）：
+
+**方式一：命令行直接指定主机**
+```bash
+# 单节点 1 号机跑 8 个进程，单节点 2 号机跑 8 个进程，总共 16 个进程
+mpirun -np 16 -H node01:8,node02:8 ./hello
+```
+
+**方式二：使用 hostfile（推荐，更清晰）**
+
+创建一个 `hostfile` 文本文件，每行写一个节点，后面加 `slots=N` 表示这个节点最多能跑多少个进程（一般等于 GPU 数量）：
+```
+# 这是我的 hostfile 内容
+node01 slots=8
+node02 slots=8
+node03 slots=8
+```
+
+然后运行：
+```bash
+# 在 3 个节点上总共启动 24 个进程（每个节点 8 个）
+mpirun -np 24 --hostfile hostfile ./hello
+
+# 或者只在两个节点上跑 16 个进程
+mpirun -np 16 --hostfile hostfile ./hello
+```
+
+#### 常用参数详解
+
+| 参数 | 作用 | 示例 |
+|------|------|------|
+| `-np N` | 启动 **总共 N 个** MPI 进程 | `-np 8` |
+| `--hostfile file` | 从文件读取节点列表和 slots | `--hostfile myhosts` |
+| `-H node1:8,node2:8` | 命令行直接指定节点和 slots | `-H node1:8,node2:8` |
+| `-npernode N` | **每个节点启动 N 个进程**，自动计算总数 | `-npernode 8 -N 2` 启动 16 进程 |
+| `-N N` | 总共使用 N 个节点 | 配合 `-npernode` 使用 |
+| `--bind-to core` | 把进程绑定到 CPU 核心，提升性能 | 默认一般已经开了 |
+| `--map-by socket` | 按 NUMA socket 分配进程，每个 socket 一个进程组 | `--map-by socket:pe=4` |
+| `--allow-run-as-root` | 允许 root 用户运行（有时候在容器里需要） | |
+| `-x VAR_NAME` | 导出环境变量到所有 MPI 进程 | `-x CUDA_VISIBLE_DEVICES` |
+
+#### 进程绑定最佳实践
+
+在我们的环境中（单节点 8 张 GPU，每个进程一个 GPU），推荐这样绑定保证性能：
+```bash
+# 每个 socket 对应一个 NUMA 节点，通常每张 GPU 连接到一个 NUMA 节点
+# 8 卡机器一般是 2 个 CPU socket，每个 socket 对应 4 张 GPU
+mpirun -np 8 --map-by socket:pe=4 ./hello
+```
+
+这样可以让进程访问本地 GPU 延迟更低，性能更好。
+
+#### 在 SLURM 集群上运行
+
+如果你的集群用 SLURM 调度，直接用 `srun` 启动，它会自动调用 MPI：
+```bash
+# 单节点 8GPU
+srun -N 1 --ntasks-per-node=8 ./hello
+
+# 2 节点，每节点 8GPU，总共 16 进程
+srun -N 2 --ntasks-per-node=8 ./hello
+```
+
+一般不需要自己加 `mpirun`，`srun` 会处理好。
+
+#### 环境变量传递
+
+如果你需要给 MPI 程序传递环境变量，比如 NCCL 调试：
+```bash
+# 方法一：-x 参数传递
+mpirun -np 8 -x NCCL_DEBUG=INFO ./myapp
+
+# 方法二：先 export 再 mpirun
+export NCCL_DEBUG=INFO
+mpirun -np 8 ./myapp
+```
 
 ## 示例代码：第一个 MPI 程序
 
