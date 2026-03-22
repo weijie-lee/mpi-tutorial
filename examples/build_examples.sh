@@ -49,4 +49,22 @@ else
 fi
 cd ..
 
+# 完整应用示例
+echo "Building 06-applications..."
+cd 06-applications
+mpicc -O2 -o jacobi2d jacobi2d.c -lm
+echo "Built jacobi2d"
+cd ..
+
+# RDMA Verbs 示例，如果libverbs存在就编译
+echo "Building 08-rdma-verbs..."
+cd 08-rdma-verbs
+if [ -f /usr/include/infiniband/verbs.h ]; then
+    make
+    echo "Built RDMA Verbs examples server/client"
+else
+    echo "libibverbs-dev not found, skipping RDMA Verbs examples"
+fi
+cd ..
+
 echo "Done. Use mpirun -np <N> <program> to run."

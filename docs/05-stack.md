@@ -216,4 +216,4 @@ NCCL INFO Using cuda IPC
 
 ## 下一步
 
-→ 下一章：[实现环境与调试优化](06-optimize.md)
+→ 下一章：[完整应用实例：二维Jacobi迭代](06-applications.md)

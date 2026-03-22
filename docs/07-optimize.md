@@ -120,4 +120,4 @@ chmod +x build_examples.sh
 
 ## 下一步
 
-→ 下一章：[RDMA Verbs 编程入门](07-rdma-verbs.md)
+→ 下一章：[RDMA Verbs 编程入门](08-rdma-verbs.md)

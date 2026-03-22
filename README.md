@@ -25,16 +25,17 @@ mpi-tutorial/
 │   ├── 03-advanced.md  # 进阶核心主题（派生类型、拓扑、RMA等）
 │   ├── 04-hardware.md  # GPU 与 RDMA 支持（CUDA-aware MPI）
 │   ├── 05-stack.md     # NCCL 与 PyTorch 结合（DDP分布式训练）
-│   ├── 06-optimize.md  # 实现环境与调试优化（调试+性能调优）
-│   └── 07-rdma-verbs.md # RDMA Verbs 原生编程入门
+│   ├── 06-applications.md # 完整应用实例：二维Jacobi迭代
+│   ├── 07-optimize.md  # 实现环境与调试优化（调试+性能调优）
+│   └── 08-rdma-verbs.md # RDMA Verbs 原生编程入门
 └── examples/           # 可运行示例代码
     ├── 01-basics/      # 基础示例（hello、计时、错误处理）
     ├── 02-core/        # 核心通信示例（sendrecv、死锁、非阻塞、集合通信、pi计算）
     ├── 03-advanced/    # 进阶示例（派生类型、笛卡尔拓扑、通信域分裂、RMA）
-    ├── 04-hardware/    # GPU/RDMA 示例（CUDA-aware MPI）
+    ├── 04-hardware/    # GPU/RDMA 示例（CUDA-aware MPI + RDMA Write）
     ├── 05-pytorch/     # PyTorch 示例（MPI初始化、DDP分布式训练）
-    ├── 06-applications/# 完整应用（Jacobi迭代）
-    ├── 07-rdma-verbs/  # RDMA Verbs 编程示例（server/client）
+    ├── 06-applications/# 完整应用（Jacobi二维迭代并行求解泊松方程）
+    ├── 08-rdma-verbs/  # RDMA Verbs 原生编程示例（server/client）
     └── build_examples.sh # 一键编译所有C/C++/CUDA示例
 ```
 
@@ -47,7 +48,9 @@ mpi-tutorial/
 3. **进阶**：根据需要选读 [03-advanced.md](docs/03-advanced.md) 里的进阶主题
 4. **硬件加速**：如果你有GPU/RDMA，一定要看 [04-hardware.md](docs/04-hardware.md)，理解GPU直接通信怎么工作
 5. **深度学习**：看多节点多GPU训练，看 [05-stack.md](docs/05-stack.md)，理解MPI+NCCL+PyTorch分工
-6. **调优**：遇到性能问题，看 [06-optimize.md](docs/06-optimize.md) 调试优化
+6. **完整应用**：看 [06-applications.md](docs/06-applications.md)，学习如何把一个完整问题并行化
+7. **调优**：遇到性能问题，看 [07-optimize.md](docs/07-optimize.md) 调试优化
+8. **原生RDMA编程**：想直接写RDMA程序，看 [08-rdma-verbs.md](docs/08-rdma-verbs.md)
 
 ## 第一步：检查你的环境
 
@@ -105,8 +108,9 @@ mpirun -np 4 ./pi_monte_carlo
 | [03-advanced.md](docs/03-advanced.md) | 派生数据类型，虚拟拓扑，通信域分裂，单侧通信（RMA），MPI-IO |
 | [04-hardware.md](docs/04-hardware.md) | CUDA-aware MPI 原理和示例，RDMA 原理和优势，如何检查支持 |
 | [05-stack.md](docs/05-stack.md) | MPI vs NCCL 分工，PyTorch DDP 如何配合 MPI，完整多节点多GPU训练示例 |
-| [06-optimize.md](docs/06-optimize.md) | 各种MPI实现对比，编译运行方法，调试工具，性能优化要点 |
-| [07-rdma-verbs.md](docs/07-rdma-verbs.md) | RDMA Verbs 原生编程入门，完整 client/server 可运行示例 |
+| [06-applications.md](docs/06-applications.md) | 完整应用：二维Jacobi迭代并行求解泊松方程，讲解域分解和边界交换 |
+| [07-optimize.md](docs/07-optimize.md) | 各种MPI实现对比，编译运行方法，调试工具，性能优化要点 |
+| [08-rdma-verbs.md](docs/08-rdma-verbs.md) | RDMA Verbs 原生编程入门，完整 client/server 可运行示例 |
 
 ## 贡献
 
@@ -115,4 +119,3 @@ mpirun -np 4 ./pi_monte_carlo
 ## 许可证
 
 MIT
-
