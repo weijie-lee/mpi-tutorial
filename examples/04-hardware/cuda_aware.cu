@@ -1,22 +1,17 @@
+// examples/04-hardware/cuda_aware.cu
+// 演示 CUDA-aware MPI：直接发送 GPU 设备内存，不需要 CPU 拷贝
+// 编译：
+//   nvcc -c cuda_aware.cu -o cuda_aware.o
+//   mpic++ cuda_aware.o -o cuda_aware -lcuda
+// 运行：mpirun -np 2 ./cuda_aware
+// 注意：需要你的 MPI 支持 CUDA-aware，否则会 segmentation fault
+
 #include <mpi.h>
 #include <cuda_runtime.h>
-#include <iostream>
-
-/*
- * CUDA-aware MPI 示例：直接发送GPU设备内存
- * 编译：nvcc -c cuda_aware.cu -o cuda_aware.o && mpic++ cuda_aware.o -o cuda_aware -lcuda
- * 运行：mpirun -np 2 ./cuda_aware
- * 要求MPI已经编译支持CUDA
- */
-
-__global__ void init_kernel(float *buf, int n, float val) {
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx < n) {
-        buf[idx] = val + idx;
-    }
-}
+#include <stdio.h>
 
 int main(int argc, char** argv) {
+    // 照常初始化 MPI
     MPI_Init(&argc, &argv);
 
     int rank, size;
@@ -24,50 +19,69 @@ int main(int argc, char** argv) {
     MPI_Comm_size(MPI_COMM_WORLD, &size);
 
     if (size < 2) {
-        if (rank == 0) {
-            std::cout << "Need at least 2 processes" << std::endl;
-        }
+        fprintf(stderr, "Need at least 2 processes\n");
         MPI_Finalize();
         return 1;
     }
 
-    const int n = 1024;
+    // --------------------------
+    // 每个进程绑定到对应 GPU（假设每个进程一个 GPU）
+    // 多进程多GPU，一个进程对应一张卡，这是标准做法
+    int n_devices;
+    cudaGetDeviceCount(&n_devices);
+    int device_id = rank % n_devices;
+    cudaSetDevice(device_id);
+    printf("Rank %d: using GPU %d\n", rank, device_id);
 
-    // 分配GPU内存
+    // --------------------------
+    // 直接在 GPU 上分配内存
+    const int N = 1024;
     float *d_buf;
-    cudaError_t err = cudaMalloc(&d_buf, n * sizeof(float));
-    if (err != cudaSuccess) {
-        std::cerr << "Rank " << rank << " cudaMalloc failed: "
-                  << cudaGetErrorString(err) << std::endl;
-        MPI_Finalize();
-        return 1;
-    }
+    cudaMalloc(&d_buf, N * sizeof(float));
 
-    // 初始化
+    // --------------------------
+    // rank 0 初始化数据在 GPU，直接发送给 rank 1
     if (rank == 0) {
-        init_kernel<<<(n+255)/256, 256>>>(d_buf, n, 1.0f);
-        cudaDeviceSynchronize();
-        std::cout << "Rank 0 initialized GPU buffer, sending to rank 1" << std::endl;
-    }
-
-    // CUDA-aware MPI 直接发送设备内存
-    if (rank == 0) {
-        MPI_Send(d_buf, n, MPI_FLOAT, 1, 0, MPI_COMM_WORLD);
-    } else if (rank == 1) {
-        MPI_Status status;
-        MPI_Recv(d_buf, n, MPI_FLOAT, 0, 0, MPI_COMM_WORLD, &status);
-
-        // 拷贝回CPU检查结果
-        float *h_buf = new float[n];
-        cudaMemcpy(h_buf, d_buf, n * sizeof(float), cudaMemcpyDeviceToHost);
-        std::cout << "Rank 1 received first 5 elements: ";
-        for (int i = 0; i < 5 && i < n; i++) {
-            std::cout << h_buf[i] << " ";
+        // 主机端初始化
+        float *h_buf = new float[N];
+        for (int i = 0; i < N; i++) {
+            h_buf[i] = (float)i;
         }
-        std::cout << "..." << std::endl;
+        // 拷贝到 GPU
+        cudaMemcpy(d_buf, h_buf, N * sizeof(float), cudaMemcpyHostToDevice);
+        printf("Rank 0: initialized %d floats on GPU, sending to rank 1\n", N);
+
+        // --------------------------
+        // CUDA-aware MPI：直接发送 GPU 设备指针！
+        // 不需要先拷到 CPU 再发送
+        MPI_Send(d_buf, N, MPI_FLOAT, 1, 0, MPI_COMM_WORLD);
+        delete[] h_buf;
+    } else if (rank == 1) {
+        // 直接接收放到 GPU 内存
+        printf("Rank 1: receiving directly into GPU memory\n");
+        MPI_Recv(d_buf, N, MPI_FLOAT, 0, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+
+        // --------------------------
+        // 拷回 CPU 验证结果
+        float *h_buf = new float[N];
+        cudaMemcpy(h_buf, d_buf, N * sizeof(float), cudaMemcpyDeviceToHost);
+        printf("Rank 1: received first 5 elements: %f %f %f %f %f\n",
+               h_buf[0], h_buf[1], h_buf[2], h_buf[3], h_buf[4]);
+
+        // 验证正确性
+        bool ok = true;
+        for (int i = 0; i < N; i++) {
+            if (h_buf[i] != (float)i) {
+                ok = false;
+                break;
+            }
+        }
+        printf("Verification: %s\n", ok ? "PASS" : "FAIL");
         delete[] h_buf;
     }
 
+    // --------------------------
+    // 清理
     cudaFree(d_buf);
     MPI_Finalize();
     return 0;

@@ -1,84 +1,95 @@
+// examples/03-advanced/rma_putget.c
+// 演示 MPI 单侧通信（RMA - Remote Memory Access）put/get
+// 单侧通信：一端可以直接读写另一端内存，不需要另一端主动参与
+// 编译：mpicc -O2 -o rma_putget rma_putget.c
+// 运行：mpirun -np 2 ./rma_putget
+
 #include <mpi.h>
 #include <stdio.h>
 
-/*
- * RMA 单侧通信示例：Put 写远程内存，Get 读远程内存
- */
-
 int main(int argc, char** argv) {
-    MPI_Init(&argc, &argv);
-
     int rank, size;
+    MPI_Init(&argc, &argv);
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &size);
 
     if (size < 2) {
-        printf("Need at least 2 processes\n");
+        fprintf(stderr, "Need at least 2 processes\n");
         MPI_Finalize();
         return 1;
     }
 
-    const int n = 4;
-    double local_buf[n];
-
-    // 初始化本地数据
-    for (int i = 0; i < n; i++) {
-        local_buf[i] = rank * 100 + i;
-    }
-
-    printf("Rank %d initial: ", rank);
-    for (int i = 0; i < n; i++) {
-        printf("%.0f ", local_buf[i]);
-    }
-    printf("\n");
-
-    // 创建窗口，暴露本地缓冲区
-    MPI_Win win;
-    MPI_Win_create(local_buf, n * sizeof(double), sizeof(double),
-                   MPI_INFO_NULL, MPI_COMM_WORLD, &win);
-
-    int other = 1 - rank;
-
-    // 第一个栅栏同步，准备好窗口
-    MPI_Win_fence(0, win);
+    // --------------------------
+    // 单侧通信第一步：每个进程暴露自己一块内存给对方访问
+    // 这个叫做 创建窗口（Window）
+    int data;
+    MPI_Win win; // 窗口句柄
 
     if (rank == 0) {
-        double send[2] = {999, 888};
-        // rank 0 把数据写到 rank 1 缓冲区的偏移 1 位置
-        MPI_Put(send, 2, MPI_DOUBLE, other, 1, 2, MPI_DOUBLE, win);
-        printf("Rank 0 put [999, 888] to rank 1 at offset 1\n");
+        data = 1234; // rank 0 初始化数据
+    } else {
+        data = 0;
     }
 
-    // 栅栏保证操作完成
+    // --------------------------
+    // 创建窗口：暴露本地 data 给远程访问
+    // MPI_Win_create(
+    //     &data,      // 暴露的内存起始地址
+    //     sizeof(int), // 暴露的内存大小（字节）
+    //     sizeof(int), // 单位大小
+    //     MPI_INFO_NULL, // 信息，默认用 NULL
+    //     MPI_COMM_WORLD, // 通信域
+    //     &win // 输出窗口句柄
+    // );
+    MPI_Win_create(&data, sizeof(int), sizeof(int), MPI_INFO_NULL, MPI_COMM_WORLD, &win);
+
+    // --------------------------
+    //  fence 同步：所有进程进入 RMA 访问阶段
+    // 所有进程必须调用 MPI_Win_fence 才能开始访问
     MPI_Win_fence(0, win);
 
+    // --------------------------
+    // rank 1 从 rank 0 读数据
+    // MPI_Get：把远程 window 的数据读到本地
     if (rank == 1) {
-        printf("Rank 1 after put: ");
-        for (int i = 0; i < n; i++) {
-            printf("%.0f ", local_buf[i]);
-        }
-        printf("\n");
+        int recv_data;
+        // MPI_Get(
+        //     &recv_data, // 本地接收缓冲区
+        //     1, MPI_INT, // 接收 1 个 int
+        //     0, // 目标进程 rank（我们读 rank 0 的数据）
+        //     0, // 目标偏移（字节），从窗口起始第 0 字节开始读
+        //     1, MPI_INT, // 读 1 个 int
+        //     win, // 窗口
+        // );
+        MPI_Get(&recv_data, 1, MPI_INT, 0, 0, 1, MPI_INT, win);
+        printf("Rank 1: got data %d from rank 0\n", recv_data);
+
+        // 我们再改一下 rank 0 的数据，用 MPI_Put 写过去
+        int new_data = 5678;
+        MPI_Put(&new_data, 1, MPI_INT, 0, 0, 1, MPI_INT, win);
+        printf("Rank 1: put new data %d to rank 0\n", new_data);
     }
 
-    // 再同步，然后 Get 操作
+    // --------------------------
+    //  fence 同步：所有 RMA 访问完成
     MPI_Win_fence(0, win);
 
+    // rank 0 看看数据是不是被改了
     if (rank == 0) {
-        double recv[3];
-        // rank 0 从 rank 1 读 3 个元素，从偏移 0 开始
-        MPI_Get(recv, 3, MPI_DOUBLE, other, 0, 3, MPI_DOUBLE, win);
-        MPI_Win_fence(0, win);
-
-        printf("Rank 0 got from rank 1: ");
-        for (int i = 0; i < 3; i++) {
-            printf("%.0f ", recv[i]);
-        }
-        printf("\n");
+        printf("Rank 0: data after put from rank 1 is now: %d\n", data);
     }
 
-    MPI_Win_fence(0, win);
-
+    // --------------------------
+    // 释放窗口
     MPI_Win_free(&win);
+
     MPI_Finalize();
     return 0;
 }
+
+/*
+ * 单侧通信优势：
+ * 1. 不需要对方 CPU 参与，适合动态不规则访问
+ * 2. 一方可以主动读写另一方内存，握手更少
+ * 3. 负载均衡、检查点常用
+ */

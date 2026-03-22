@@ -49,6 +49,17 @@ else
 fi
 cd ..
 
+# 编译C/C++ NCCL示例，如果nccl存在就编译
+echo "Building 05-pytorch C++ examples..."
+cd 05-pytorch
+if [ -f /usr/include/nccl.h ] && command -v nvcc >/dev/null 2>&1; then
+    nvcc -O2 nccl_allreduce.cu -o nccl_allreduce -lnccl -lmpi
+    echo "Built NCCL example nccl_allreduce"
+else
+    echo "nccl or nvcc not found, skipping NCCL example"
+fi
+cd ..
+
 # 完整应用示例
 echo "Building 06-applications..."
 cd 06-applications
