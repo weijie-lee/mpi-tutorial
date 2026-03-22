@@ -242,33 +242,62 @@ if (rank == 0) {
 
 集合通信是**通信域中所有进程都必须参与**的通信操作，比你自己用点对点实现更高效，因为 MPI 实现会针对网络拓扑做专门优化。
 
-### 常见集合通信操作图解
+下面列出**所有常用集合通信原语**，包括定义、用法、深度学习场景对应：
 
-#### 1. 屏障同步：`MPI_Barrier`
-所有进程都调用 `MPI_Barrier` 之后才会一起继续往下走，用来做同步点：
+---
+
+### 1. 屏障同步：`MPI_Barrier`
+**定义**：所有进程都调用 `MPI_Barrier` 之后才会一起继续往下走，用来做同步点。
+
 ```c
 // 所有进程到达这里，等所有人都到了才一起走
 MPI_Barrier(MPI_COMM_WORLD);
 ```
 
-**常用场景：** 计时，保证所有人都准备好了再开始。
+**深度学习对应场景**：
+- 初始化结束后，开始训练前同步
+- 验证前同步，确保所有进程都完成训练一轮
+- 检查点保存前同步
 
-#### 2. 广播：`MPI_Bcast`
-从一个根进程把**同一份数据**发给所有进程：
+---
+
+### 2. 广播：`MPI_Bcast`
+**定义**：从一个根进程把**同一份数据**发给所有进程，调用完后所有进程都有这份数据。
+
 ```c
 // root 进程把 data 广播给所有进程
+// data: 缓冲区（root 是发送数据，非root是接收数据）
+// count: 元素个数
+// datatype: 数据类型
+// root: 根进程 rank
+// comm: 通信域
 MPI_Bcast(data, count, datatype, root, comm);
 ```
 
 **示意图：**
 ```
-rank 0 (root): [1 2 3 4] → 广播给所有人 → 每个进程都有 [1 2 3 4]
+rank 0 (root): [1 2 3 4] → 广播给所有人 → 每个进程都得到 [1 2 3 4]
 ```
 
-#### 3. 发散（Scatter）：`MPI_Scatter`
-根进程把数据分成块，每个进程分一块：
+**深度学习对应场景**：
+- 初始化：root 加载预训练权重，广播给所有进程，保证所有进程初始权重一致
+- 每隔 N 轮，root 把当前最好模型参数广播给所有进程
+
+---
+
+### 3. 发散：`MPI_Scatter`
+**定义**：根进程把数组分成连续块，每个进程分一块，根分完后每个进程只拿到自己那块。
+
 ```c
-// root: sendbuf 里有 size 块，分给每个进程一块
+// root 端 sendbuf 每个进程一块，分发出去
+// sendbuf: 根发送缓冲区
+// sendcount: 每个进程拿多少个元素
+// sendtype: 元素类型
+// recvbuf: 接收缓冲区（每个进程自己的）
+// recvcount: 接收多少个
+// recvtype: 接收类型
+// root: 根 rank
+// comm: 通信域
 MPI_Scatter(sendbuf, sendcount, sendtype,
             recvbuf, recvcount, recvtype,
             root, comm);
@@ -277,12 +306,38 @@ MPI_Scatter(sendbuf, sendcount, sendtype,
 **示意图（4个进程）：**
 ```
 root: [块0 块1 块2 块3] → 发散 →
-rank0: 块0, rank1: 块1, rank2: 块2, rank3:块3
+rank0: 块0, rank1: 块1, rank2: 块2, rank3: 块3
 ```
 
-#### 4. 收集（Gather）：`MPI_Gather`
-正好反过来，每个进程把一块数据收集到根进程拼起来：
+**深度学习对应场景**：
+- 数据并行：整个数据集在 root，分给每个进程，每个进程只训练自己分片
+- 参数分片：模型参数按层分给不同进程，做模型并行
+
+---
+
+### 4. 发散（变长）：`MPI_Scatterv`
+**定义**：和 `MPI_Scatter` 类似，但每个进程分到的长度可以不一样，每个进程长度不同。
+
 ```c
+// sendcounts: 数组，每个进程对应的长度
+// displs: 每个块在 sendbuf 中的偏移（字节数不对，是元素个数偏移！）
+MPI_Scatterv(sendbuf, sendcounts, displs, sendtype,
+             recvbuf, recvcount, recvtype,
+             root, comm);
+```
+
+**深度学习对应场景**：
+- 不平衡数据分片，每个进程样本数不一样
+- 异构集群，不同进程显存不一样，batch size 不同
+
+---
+
+### 5. 收集：`MPI_Gather`
+**定义**：正好反过来，每个进程把自己一块数据收集到根进程，根拼起来。
+
+```c
+// 每个进程 sendbuf 一块，收集到 root 的 recvbuf
+// 每个进程放一块，按 rank 顺序拼
 MPI_Gather(sendbuf, sendcount, sendtype,
            recvbuf, recvcount, recvtype,
            root, comm);
@@ -296,26 +351,57 @@ rank2: 块2 ──┤
 rank3: 块3 ──┘
 ```
 
-#### 5. 全收集：`MPI_Allgather`
-每个进程收集所有块到自己这里，相当于每个进程都拿到全部数据：
+**深度学习对应场景**：
+- 评估：每个进程算自己分片验证集指标，收集到 root 汇总算整体指标
+- 分布式搜索：每个进程搜不同超参，收集所有结果到 root 选最优
+
+---
+
+### 6. 收集（变长）：`MPI_Gatherv`
+**定义**：和 `MPI_Gather` 类似，但每个进程发送长度可以不一样。
+
 ```c
+MPI_Gatherv(sendbuf, sendcount, displs, sendtype,
+            recvbuf, recvcounts, displs, recvtype,
+            root, comm);
+```
+
+---
+
+### 7. 全收集：`MPI_Allgather`
+**定义**：每个进程把自己一块收集到**所有**进程，所有进程都拿到完整的拼好结果。
+
+```c
+// 和 Gather 区别：收集完结果所有进程都有，不止 root
 MPI_Allgather(sendbuf, sendcount, sendtype,
               recvbuf, recvcount, recvtype,
               comm);
 ```
 
-**和 Gather 的区别：** 所有进程都拿到了完整结果，不止 root。
+**和 Gather 的区别：** Gather 只有 root 有结果，Allgather 所有进程都有结果。
 
-#### 6. 全局归约：`MPI_Reduce` / `MPI_Allreduce`
-把所有进程的数据做一个归约操作（求和、找最大最小等），结果放到根进程（`MPI_Reduce`）或所有进程（`MPI_Allreduce`）。
+**深度学习对应场景**：
+- 分布式 embedding：每个进程负责一部分词向量，所有进程需要所有词向量才能做训练，Allgather 把所有分片拼起来给所有人
+- 每个进程统计自己batch的指标，所有进程都要拿到所有指标
 
-比如计算全局总和：
+---
+
+### 8. 全收集（变长）：`MPI_Allgatherv`
+**定义**：Allgather 的变长版本，每个进程长度不同。
+
+---
+
+### 9. 全局归约：`MPI_Reduce`
+**定义**：把所有进程的数据按归约操作（求和、最大、最小等）计算，结果放在 root 进程。
+
 ```c
-// 每个进程的 local_sum 归约到 root 得到全局总和
-MPI_Reduce(&local_sum, &global_sum, 1, MPI_DOUBLE, MPI_SUM, root, comm);
+// 每个进程的 localval 做归约，结果放到 root 的 globalval
+// op: 归约操作，比如 MPI_SUM 就是求和
+MPI_Reduce(&localval, &globalval, count, datatype, op, root, comm);
 ```
 
-常用操作符：
+**常用操作符：**
+
 | 操作符 | 含义 |
 |--------|------|
 | `MPI_SUM` | 求和 |
@@ -327,35 +413,89 @@ MPI_Reduce(&local_sum, &global_sum, 1, MPI_DOUBLE, MPI_SUM, root, comm);
 | `MPI_BAND` | 按位与 |
 | `MPI_BOR` | 按位或 |
 
-**示例：** 求所有进程局部最大值的全局最大值：
+**深度学习对应场景**：
+- 多个进程验证，每个进程算自己的误差，归约到 root 算平均误差
+- 所有进程统计梯度范数，root 找最大梯度范数用来做梯度裁剪
+
+---
+
+### 10. 全归约：`MPI_Allreduce`
+**定义**：归约完结果**所有进程**都得到，不只是 root。
+
 ```c
-double local_max = ...; // 每个进程自己算出来的局部最大值
-double global_max;
-MPI_Reduce(&local_max, &global_max, 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
-// 现在只有 rank 0 有 global_max
-// 如果用 MPI_Allreduce，所有进程都能拿到 global_max
+// 每个进程 localval，归约完所有进程都得到 globalval
+MPI_Allreduce(&localval, &globalval, count, datatype, op, comm);
 ```
 
-#### 7. 全归约：`MPI_Allreduce`
-在深度学习训练中非常常用！比如所有卡算完梯度，然后所有卡都需要梯度平均值，就用 `MPI_Allreduce`。
+**这是深度学习训练最常用的集合通信！** 每次迭代完，所有卡都需要平均梯度，Allreduce 正好干这个用。
 
-### 为什么集合通信更快？
+**深度学习对应场景**：
+- 数据并行训练：每个卡算完自己batch梯度，Allreduce 做梯度平均，所有卡梯度一致
+- 分布式 batch norm：每个卡统计 mean/var，Allreduce 得到全局统计量
+
+**和 Reduce 区别：** Reduce 只有 root 有结果，Allreduce 所有进程都有结果。数据平行训练每个卡都要更新梯度，所以必须用 Allreduce。
+
+---
+
+### 11. 归约分散：`MPI_ReduceScatter`
+**定义**：先归约再分散，每个进程得到归约结果的一块。比 Allreduce 更高效，适合大张量。
+
+```c
+// sendbuf 每个进程一块，先归约，结果分给各个进程，每个进程一块
+MPI_ReduceScatter(sendbuf, recvbuf, recvcounts, datatype, op, comm);
+```
+
+**深度学习对应场景**：
+- 大数据量 Allreduce，模型参数分片，归约完每个进程拿自己那块更新，比完整 Allreduce 更高效，减少通信量
+
+---
+
+### 12. 扫描：`MPI_Scan`
+**定义**：前缀归约，每个进程 i 得到 rank 0..i 的归约结果。
+
+```c
+// 每个进程输入 val，输出 out[i] = op(val[0..i])
+MPI_Scan(&val, &out, count, datatype, op, comm);
+```
+
+**深度学习对应场景**：
+- 分层扫描，累计梯度统计
+- 动态规划分布式，每个步骤需要前缀和
+
+---
+
+### 13. 全对全交换：`MPI_Alltoall`
+**定义**：每个进程给每个进程发一块，每个进程从每个进程收一块，所有交换一次完成。
+
+```c
+// sendbuf[i] 是发给 rank i 的块，recvbuf[i] 是从 rank i 收到的块
+MPI_Alltoall(sendbuf, sendcount, sendtype,
+             recvbuf, recvcount, recvtype, comm);
+```
+
+**深度学习对应场景**：
+- 流水线并行：每个层在不同进程，前向反向需要交换激活/梯度，Alltoall 一次交换所有
+- 专家混合 MoE：每个token路由到不同专家，需要 Alltoall 交换
+
+---
+
+## 为什么集合通信更快？
 - 实现层使用了树型拓扑、环形拓扑等优化算法，减少网络跳数
 - 可以利用网络硬件的广播能力
 - 更好地利用网络带宽，减少冲突
 - MPI 实现厂商（比如 NVIDIA、Mellanox）会针对硬件做深度优化
 
-### 使用原则
+## 使用原则
 > 💡 能用集合通信就不要自己用点对点实现集合操作。标准 MPI 实现的集合通信比你手写的快很多，而且不容易错。
 
 ## 完整可运行示例：集合通信求 π
 
 ```c
-// examples/02-core/collectives.c
-// 用 Monte Carlo 方法计算 π，演示 MPI_Reduce 的用法
+// examples/02-core/pi_monte_carlo.c
+// 使用 Monte Carlo 方法计算 π，演示 MPI_Reduce 实际应用
 ```
 
-每个进程算自己那块的结果，然后归约求和得到最终 π。
+每个进程并行投自己那部分点，最后 Reduce 求和得到总数。
 
 ## 练习题
 
@@ -369,7 +509,8 @@ MPI_Reduce(&local_max, &global_max, 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
 - [sendrecv.c](../examples/02-core/sendrecv.c) - 基本发送接收
 - [deadlock.c](../examples/02-core/deadlock.c) - 死锁示例（不要这么写）
 - [nonblocking.c](../examples/02-core/nonblocking.c) - 非阻塞通信
-- [collectives.c](../examples/02-core/collectives.c) - 集合通信计算 π 示例
+- [collectives.c](../examples/02-core/collectives.c) - 多个集合通信完整示例
+- [pi_monte_carlo.c](../examples/02-core/pi_monte_carlo.c) - Monte Carlo 计算 π 完整示例
 
 ## 下一步
 

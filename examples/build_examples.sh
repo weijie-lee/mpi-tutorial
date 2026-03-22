@@ -17,6 +17,7 @@ mpicc -O2 -o deadlock deadlock.c
 mpicc -O2 -o nonblocking nonblocking.c
 mpicc -O2 -o collectives collectives.c
 mpicc -O2 -o pi_monte_carlo pi_monte_carlo.c
+mpicc -O2 -o all-collectives all-collectives.c
 cd ..
 
 # 进阶示例
