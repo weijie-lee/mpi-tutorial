@@ -28,15 +28,24 @@ mpicc -O2 -o comm_split comm_split.c
 mpicc -O2 -o rma_putget rma_putget.c
 cd ..
 
-# GPU示例，如果nvcc存在就编译
+# GPU/RDMA示例，如果nvcc存在就编译
 echo "Building 04-hardware..."
 cd 04-hardware
+# 编译CUDA-aware MPI示例
 if command -v nvcc >/dev/null 2>&1; then
     nvcc -c cuda_aware.cu -o cuda_aware.o
     mpic++ cuda_aware.o -o cuda_aware -lcuda
     echo "Built CUDA example cuda_aware"
 else
     echo "nvcc not found, skipping CUDA example"
+fi
+# 编译RDMA libverbs示例，如果libverbs存在
+if [ -f /usr/include/infiniband/verbs.h ]; then
+    mpicc -O2 -o rdma_write_server rdma_write_server.c -lrdmacm -libverbs
+    mpicc -O2 -o rdma_write_client rdma_write_client.c -lrdmacm -libverbs
+    echo "Built RDMA examples rdma_write_server/rdma_write_client"
+else
+    echo "libverbs not found, skipping RDMA examples"
 fi
 cd ..
 
