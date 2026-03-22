@@ -27,7 +27,8 @@ mpi-tutorial/
 │   ├── 05-stack.md     # NCCL 与 PyTorch 结合（DDP分布式训练）
 │   ├── 06-applications.md # 完整应用实例：二维Jacobi迭代
 │   ├── 07-optimize.md  # 实现环境与调试优化（调试+性能调优）
-│   └── 08-rdma-verbs.md # RDMA Verbs 原生编程入门
+│   ├── 08-rdma-verbs.md # RDMA Verbs 原生编程入门
+│   └── 09-kubernetes-pytorchjob.md # Kubernetes 上运行 MPI：PyTorchJob 实战
 └── examples/           # 可运行示例代码
     ├── 01-basics/      # 基础示例（hello、计时、错误处理）
     ├── 02-core/        # 核心通信示例（sendrecv、死锁、非阻塞、集合通信、pi计算）
@@ -51,6 +52,7 @@ mpi-tutorial/
 6. **完整应用**：看 [06-applications.md](docs/06-applications.md)，学习如何把一个完整问题并行化
 7. **调优**：遇到性能问题，看 [07-optimize.md](docs/07-optimize.md) 调试优化
 8. **原生RDMA编程**：想直接写RDMA程序，看 [08-rdma-verbs.md](docs/08-rdma-verbs.md)
+9. **Kubernetes/PyTorchJob**：在Kubernetes上运行MPI分布式训练，看 [09-kubernetes-pytorchjob.md](docs/09-kubernetes-pytorchjob.md)
 
 ## 第一步：检查你的环境
 
@@ -111,6 +113,7 @@ mpirun -np 4 ./pi_monte_carlo
 | [06-applications.md](docs/06-applications.md) | 完整应用：二维Jacobi迭代并行求解泊松方程，讲解域分解和边界交换 |
 | [07-optimize.md](docs/07-optimize.md) | 各种MPI实现对比，编译运行方法，调试工具，性能优化要点 |
 | [08-rdma-verbs.md](docs/08-rdma-verbs.md) | RDMA Verbs 原生编程入门，完整 client/server 可运行示例 |
+| [09-kubernetes-pytorchjob.md](docs/09-kubernetes-pytorchjob.md) | 在 Kubernetes 上通过 PyTorchJob 运行 MPI 分布式训练，完整可运行示例 |
 
 ## 贡献
 
