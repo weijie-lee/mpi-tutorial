@@ -527,6 +527,114 @@ NCCL INFO Using cuda IPC
 | [mpi_basic.py](../examples/05-pytorch/mpi_basic.py) | PyTorch MPI 基础初始化 |
 | [pytorch_ddp_mpi.py](../examples/05-pytorch/pytorch_ddp_mpi.py) | 完整 PyTorch DDP 分布式训练示例（MPI 启动 + NCCL 通信） |
 
+## 10. 其他硬件厂商的专用通信库
+
+除了 NVIDIA 的 NCCL 之外，不同的 AI 硬件厂商都推出了自己的 GPU/AI 加速器专属集合通信库，分工模式和 NCCL 类似：**MPI 负责进程启动和协调，厂商通信库负责实际 GPU 集合通信**。
+
+### 各厂商通信库对比总览
+
+| 硬件厂商 | 通信库名称 | 全称 | 支持硬件 | 典型使用场景 |
+|----------|------------|------|----------|--------------|
+| NVIDIA | NCCL | NVIDIA Collective Communications Library | NVIDIA GPU | 标准 NVIDIA GPU 集群 |
+| AMD | RCCL | ROCm Collective Communications Library | AMD GPU | AMD GPU 集群 |
+| 华为 | HCCL | Huawei Collective Communication Library | 华为昇腾 NPU | 华为 Atlas 昇腾集群 |
+| 寒武纪 | CNCCL | Cambricon Collective Communication Library | 寒武纪 MLU | 寒武纪 MLU 集群 |
+| 摩尔线程 | MCCL | Moore Threads Collective Communication Library | 摩尔线程 GPU | 摩尔线程 GPU 集群 |
+
+### 各厂商详细说明
+
+#### AMD RCCL
+
+**RCCL** 是 AMD 为 ROCm 平台开发的集合通信库，对应 NVIDIA NCCL 的 AMD 版本：
+
+- 支持 AMD Instinct 系列 GPU
+- 提供和 NCCL **几乎完全相同的 API**，移植很方便
+- 原生支持 GFX90A (MI250)、GFX940 (MI300) 等架构
+- 支持 GPU Direct RDMA 过 PCIe 互连
+
+典型用法和 NCCL 完全一样：
+```cpp
+// API 几乎和 NCCL 一样，只是名字改了
+#include <rccl/rccl.h>
+
+ncclComm_t comm; // 类型名还是 ncclComm_t，API 兼容
+rcclCommInitRank(&comm, size, id, rank);
+rcclAllReduce(d_send, d_recv, n, ncclFloat, ncclSum, comm, stream);
+```
+
+PyTorch 中使用：
+```python
+# PyTorch 会自动识别，只要选 nccl 后端就行，ROCm 环境自动用 RCCL
+dist.init_process_group(backend='nccl')
+```
+
+#### 华为 HCCL（昇腾）
+
+**HCCL** 是华为为昇腾 NPU 开发的集合通信库：
+
+- 支持华为 Atlas 训练集群，昇腾 910/310P/920 芯片
+- 提供华为自研的拓扑感知算法，在昇腾互联上性能优化
+- 支持 HCCL 集合通信原语，和 NCCL 功能对等
+- 集成在华为 CANN (Compute Architecture for Neural Networks) 软件栈中
+
+在 PyTorch 中使用（torch-npu）：
+```python
+# 华为 PyTorch 扩展提供 'hccl' 后端
+import torch_npu
+from torch_npu.distributed import ParallelInit
+
+dist.init_process_group(backend='hccl')
+```
+
+分工模式还是一样：`mpirun/srun` 启动进程，HCCL 做实际集合通信。
+
+#### 寒武纪 CNCCL
+
+**CNCCL** 是寒武纪为 MLU 架构开发的集合通信库：
+
+- 支持寒武纪 MLU370/MLU590 等训练芯片
+- 提供和 NCCL 类似的 API 接口
+- 针对寒武纪 MLU 互联做了拓扑优化
+- 配合 CNToolkit 软件栈使用
+
+分工模式：MPI 负责进程启动，CNCCL 负责 MLU 通信。
+
+### 通用分工模式：MPI + 厂商通信库
+
+不管用哪个厂商的硬件，分工模式几乎都是一样的：
+
+| 层级 | 组件 | 职责 |
+|------|------|------|
+| 资源调度 | SLURM / Kubernetes | 分配节点和资源 |
+| 进程启动 | MPI / `mpirun` / `srun` | 在所有节点启动进程，分配 rank |
+| 初始化协调 | MPI | 交换硬件地址信息，建立连接 |
+| 实际通信 | 厂商通信库 (NCCL/RCCL/HCCL/CNCCL) | GPU/NPU 直接集合通信，硬件厂商专属优化 |
+| 框架层 | PyTorch DDP / ... | 上层框架封装，给用户简单接口 |
+
+这是成熟的分工：
+- MPI 做**跨平台通用的进程管理和协调**，不管硬件是什么，这部分都一样
+- 厂商做**自己硬件上的极致性能优化**，发挥最好通信效率
+
+### 在 PyTorch 中切换后端对应表
+
+| 硬件厂商 | 通信库 | PyTorch backend 参数 |
+|----------|--------|----------------------|
+| NVIDIA | NCCL | `backend='nccl'` |
+| AMD | RCCL | `backend='nccl'` (自动识别) |
+| 华为昇腾 | HCCL | `backend='hccl'` |
+| 寒武纪 | CNCCL | `backend='cncl'` (需要寒武纪扩展) |
+
+### 对比：通用 MPI 集合通信 vs 厂商专用通信库
+
+| 维度 | 通用 MPI | 厂商专用通信库 |
+|------|----------|----------------|
+| 硬件支持 | 支持所有硬件 | 只支持自家硬件 |
+| 性能 | 通用优化，不如厂商专属 | 针对自家硬件极致优化 |
+| 功能 | 支持通用点对点+集合通信 | 专注于深度学习需要的集合通信 (AllReduce等) |
+| 使用场景 | 通用并行计算，CPU/GPU混合计算 | 纯深度学习多GPU训练 |
+
+**结论**：在深度学习多GPU训练中，**MPI + 厂商通信库**是现在的 industry standard，兼顾通用性和性能。
+
 ## 下一步
 
-→ 下一章：[实现环境与调试优化](06-optimize.md)
+→ 下一章：[完整应用实例：二维Jacobi迭代](06-applications.md)
