@@ -471,6 +471,8 @@ ibv_devinfo
 - [server.c](../examples/07-rdma-verbs/server.c) - 服务器端示例
 - [client.c](../examples/07-rdma-verbs/client.c) - 客户端示例
 
-## 回到目录
+## 下一步
+
+→ 想看这些 Verbs API 在 NCCL 中是怎么被调用的？看 [第十章：全链路观测实战](10-fullstack-observe.md)
 
 → [返回首页](../README.md)

@@ -390,7 +390,7 @@ def main():
         optimizer.zero_grad()
         loss.backward()  
         # 🔥 DDP 在这里自动调用 NCCL AllReduce 同步梯度！
-        // 对应 MPI_Allreduce，语义完全一样，NCCL 更快
+        # 对应 MPI_Allreduce，语义完全一样，NCCL 更快
         optimizer.step()
 
         if batch_idx % 10 == 0 and rank == 0:
@@ -638,3 +638,5 @@ dist.init_process_group(backend='hccl')
 ## 下一步
 
 → 下一章：[完整应用实例：二维Jacobi迭代](06-applications.md)
+
+→ 想亲眼看到 `dist.all_reduce()` 底层调用链路？看 [第十章：全链路观测实战](10-fullstack-observe.md)

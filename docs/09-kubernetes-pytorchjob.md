@@ -341,4 +341,6 @@ kubectl describe pytorchjob mpi-ddp-example
 
 ## 下一步
 
+→ 下一章：[全链路观测实战：PyTorch → NCCL → RDMA](10-fullstack-observe.md)
+
 → [回到目录](../README.md)

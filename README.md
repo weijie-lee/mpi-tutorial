@@ -12,6 +12,7 @@
 - ✅ **由浅入深**：从第一个 Hello World 到多节点多GPU实战，循序渐进
 - ✅ **可运行代码**：每个章节都配有对应可编译运行的示例代码
 - ✅ **覆盖现代特性**：专门讲解 CUDA-aware MPI、RDMA、NCCL 协同、PyTorch DDP 这些现在常用的内容
+- ✅ **全链路可观测**：提供从 PyTorch API 到 RDMA 网卡的完整调用链路观测工具
 - ✅ **实用优化建议**：包含调试、性能优化要点，帮你避开常见坑
 
 ## 目录结构
@@ -28,7 +29,8 @@ mpi-tutorial/
 │   ├── 06-applications.md # 完整应用实例：二维Jacobi迭代
 │   ├── 07-optimize.md  # 实现环境与调试优化（调试+性能调优）
 │   ├── 08-rdma-verbs.md # RDMA Verbs 原生编程入门
-│   └── 09-kubernetes-pytorchjob.md # Kubernetes 上运行 MPI：PyTorchJob 实战
+│   ├── 09-kubernetes-pytorchjob.md # Kubernetes 上运行 MPI：PyTorchJob 实战
+│   └── 10-fullstack-observe.md # PyTorch → NCCL → RDMA 全链路观测实战 ⭐ NEW
 └── examples/           # 可运行示例代码
     ├── 01-basics/      # 基础示例（hello、计时、错误处理）
     ├── 02-core/        # 核心通信示例（sendrecv、死锁、非阻塞、集合通信、pi计算）
@@ -37,6 +39,7 @@ mpi-tutorial/
     ├── 05-pytorch/     # PyTorch 示例（MPI初始化、DDP分布式训练）
     ├── 06-applications/# 完整应用（Jacobi二维迭代并行求解泊松方程）
     ├── 08-rdma-verbs/  # RDMA Verbs 原生编程示例（server/client）
+    ├── 10-fullstack-observe/ # 全链路观测脚本（RDMA/TCP 对比测试） ⭐ NEW
     └── build_examples.sh # 一键编译所有C/C++/CUDA示例
 ```
 
@@ -53,6 +56,19 @@ mpi-tutorial/
 7. **调优**：遇到性能问题，看 [07-optimize.md](docs/07-optimize.md) 调试优化
 8. **原生RDMA编程**：想直接写RDMA程序，看 [08-rdma-verbs.md](docs/08-rdma-verbs.md)
 9. **Kubernetes/PyTorchJob**：在Kubernetes上运行MPI分布式训练，看 [09-kubernetes-pytorchjob.md](docs/09-kubernetes-pytorchjob.md)
+10. **全链路观测** ⭐：看 [10-fullstack-observe.md](docs/10-fullstack-observe.md)，亲眼观测 `dist.all_reduce()` 如何经过 NCCL 最终调用 RDMA Verbs API，并对比 RDMA vs TCP 的性能差异
+
+### 推荐的深度学习方向快速路径
+
+如果你主要关注**多节点多GPU训练**，可以按这个顺序快速上手：
+
+```
+04-hardware.md (RDMA 原理)
+    → 05-stack.md (NCCL + PyTorch 分工)
+    → 10-fullstack-observe.md (全链路观测实战)  ⭐
+    → 08-rdma-verbs.md (想深入了解底层)
+    → 09-kubernetes-pytorchjob.md (生产部署)
+```
 
 ## 第一步：检查你的环境
 
@@ -69,6 +85,10 @@ ompi_info --parsable | grep cuda
 # 检查是否支持 RDMA/Verbs
 ompi_info --parsable | grep verbs
 # 有输出说明支持RDMA
+
+# 检查 RDMA 设备（第十章观测实验需要）
+ibv_devinfo
+# 会列出所有 RDMA 设备
 ```
 
 ## 环境要求
@@ -99,6 +119,10 @@ chmod +x build_examples.sh
 # 跑 Monte Carlo 计算 π 示例
 cd 02-core
 mpirun -np 4 ./pi_monte_carlo
+
+# 跑全链路观测脚本（第十章）
+cd 10-fullstack-observe
+mpirun -np 2 python pytorch_nccl_rdma_demo.py
 ```
 
 ## 章节要点速览
@@ -114,6 +138,7 @@ mpirun -np 4 ./pi_monte_carlo
 | [07-optimize.md](docs/07-optimize.md) | 各种MPI实现对比，编译运行方法，调试工具，性能优化要点 |
 | [08-rdma-verbs.md](docs/08-rdma-verbs.md) | RDMA Verbs 原生编程入门，完整 client/server 可运行示例 |
 | [09-kubernetes-pytorchjob.md](docs/09-kubernetes-pytorchjob.md) | 在 Kubernetes 上通过 PyTorchJob 运行 MPI 分布式训练，完整可运行示例 |
+| [10-fullstack-observe.md](docs/10-fullstack-observe.md) ⭐ | **全链路观测实战**：从 `dist.all_reduce()` 到 RDMA NIC 的完整调用链路，NCCL 日志逐行解读，RDMA vs TCP 性能对比，环境变量速查表 |
 
 ## 贡献
 

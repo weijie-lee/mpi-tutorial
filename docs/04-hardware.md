@@ -471,3 +471,5 @@ make -j$(nproc) && make install
 ## 下一步
 
 → 下一章：[上层栈结合：NCCL 与 PyTorch](05-stack.md)
+
+→ 想看 RDMA 在 NCCL/PyTorch 中的实际表现？看 [第十章：全链路观测实战](10-fullstack-observe.md)
