@@ -18,7 +18,8 @@ int main(int argc, char** argv) {
     // 修改默认错误处理行为
     // 默认：MPI_ERRORS_ARE_FATAL → 任何错误直接终止整个程序
     // 改成：MPI_ERRORS_RETURN → 错误码返回给调用者，我们自己处理
-    MPI_Errhandler_set(MPI_COMM_WORLD, MPI_ERRORS_RETURN);
+    // 注意：MPI_Errhandler_set 在 MPI-2 之后就废弃了，新版使用 MPI_Comm_set_errhandler
+    MPI_Comm_set_errhandler(MPI_COMM_WORLD, MPI_ERRORS_RETURN);
     
     int rank;
     // 调用 MPI_Comm_rank，获取错误码

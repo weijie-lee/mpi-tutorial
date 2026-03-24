@@ -1,17 +1,26 @@
 # binaries
 *.o
 *.out
+# Ignore all compiled executables in examples directories
 hello
+timing
+error_handling
 sendrecv
 deadlock
 nonblocking
 collectives
+pi_monte_carlo
 derived_type
 cartesian
 comm_split
 rma_putget
 cuda_aware
+rdma_write_server
+rdma_write_client
+nccl_allreduce
 jacobi2d
+server
+client
 
 # IDE
 .vscode/

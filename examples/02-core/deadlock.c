@@ -6,6 +6,7 @@
 // 预期：程序卡住，就是死锁了
 
 #include <mpi.h>
+#include <stdio.h>
 
 int main(int argc, char** argv) {
     int rank;

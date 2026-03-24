@@ -51,7 +51,6 @@ static inline struct ibv_qp *create_qp(struct ibv_pd *pd, struct ibv_cq *cq, int
 // 把QP调到RTR状态
 static inline int modify_qp_to_rtr(struct ibv_qp *qp, uint32_t remote_qpn, union ibv_gid remote_gid) {
     struct ibv_qp_attr attr = {0};
-    struct ibv_qp_init_attr init_attr = {0};
     attr.qp_state = IBV_QPS_RTR;
     attr.path_mtu = IBV_MTU_1024;
     attr.dest_qp_num = remote_qpn;
@@ -62,7 +61,9 @@ static inline int modify_qp_to_rtr(struct ibv_qp *qp, uint32_t remote_qpn, union
     attr.ah_attr.sl = 0;
     attr.ah_attr.src_path_bits = 0;
     attr.ah_attr.port_num = 1;
-    attr.ah_attr.gid = remote_gid;
+    attr.ah_attr.is_global = 1;          // GID 路由需要全局路由
+    attr.ah_attr.grh.dgid = remote_gid;  // 目标 GID 放在 grh 里
+    attr.ah_attr.grh.sgid_index = GID_INDEX;
     return ibv_modify_qp(qp, &attr,
         IBV_QP_STATE | IBV_QP_PATH_MTU | IBV_QP_DEST_QPN |
         IBV_QP_RQ_PSN | IBV_QP_MAX_DEST_RD_ATOMIC | IBV_QP_MIN_RNR_TIMER |

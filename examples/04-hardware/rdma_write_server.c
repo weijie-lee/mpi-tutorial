@@ -120,7 +120,9 @@ int main(int argc, char** argv) {
     qp_attr.recv_cq = cq;    // 接收完成放到这个 CQ
     qp_attr.cap.max_send_wr  = 16;  // 最大未完成发送请求
     qp_attr.cap.max_recv_wr  = 16;  // 最大未完成接收请求
-    qp_attr.cap.max_sge    = 1;   // 最大 scatter-gather 元素
+    qp_attr.cap.max_send_sge = 1;   // 最大 send scatter-gather 元素
+    qp_attr.cap.max_recv_sge = 1;   // 最大 recv scatter-gather 元素
+    qp_attr.cap.max_inline_data = 0; // 不使用 inline data
     qp_attr.qp_type        = IBV_QPT_RC; // Reliable Connection 可靠连接
     struct ibv_qp* qp = ibv_create_qp(pd, &qp_attr);
     if (!qp) {

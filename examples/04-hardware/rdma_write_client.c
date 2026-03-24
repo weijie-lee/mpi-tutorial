@@ -22,8 +22,8 @@
 
 int main(int argc, char** argv) {
     if (argc < 5) {
-        fprintf(stderr, "Usage: %s <server-ip> <port> <remote-buf-addr-hex> <remote-rkey-hex>\n");
-        fprintf(stderr, "Example: %s 192.168.1.100 12345 0xaaaabbbb 0x1234\n");
+        fprintf(stderr, "Usage: %s <server-ip> <port> <remote-buf-addr-hex> <remote-rkey-hex>\n", argv[0]);
+        fprintf(stderr, "Example: %s 192.168.1.100 12345 0xaaaabbbb 0x1234\n", argv[0]);
         return 1;
     }
 
@@ -98,7 +98,9 @@ int main(int argc, char** argv) {
     qp_attr.recv_cq = cq;
     qp_attr.cap.max_send_wr  = 16;
     qp_attr.cap.max_recv_wr  = 16;
-    qp_attr.cap.max_sge    = 1;
+    qp_attr.cap.max_send_sge = 1;   // 最大 send scatter-gather 元素
+    qp_attr.cap.max_recv_sge = 1;   // 最大 recv scatter-gather 元素
+    qp_attr.cap.max_inline_data = 0; // 不使用 inline data
     qp_attr.qp_type        = IBV_QPT_RC;
     struct ibv_qp* qp = ibv_create_qp(pd, &qp_attr);
     if (!qp) {
@@ -148,10 +150,10 @@ int main(int argc, char** argv) {
     addr.sin_addr.s_addr = inet_addr(server_ip);
     addr.sin_port = htons(port);
 
-    printf("Client: connecting...\n");
-    ret = rdma_connect(conn_id, (struct sockaddr*)&addr, NULL);
+    printf("Client: resolving address...\n");
+    ret = rdma_resolve_addr(conn_id, NULL, (struct sockaddr*)&addr, 1000);
     if (ret) {
-        perror("rdma_connect");
+        perror("rdma_resolve_addr");
         rdma_destroy_id(conn_id);
         rdma_destroy_event_channel(ec);
         ibv_destroy_qp(qp);
@@ -197,8 +199,8 @@ int main(int argc, char** argv) {
     wr.sg_list = &sge;    // 散列 gather 列表
     wr.num_sge = 1;       // 一个块
     wr.opcode = IBV_WR_RDMA_WRITE; // 操作类型：RDMA Write
-    wr.rdma.remote_addr = remote_addr; // 远程地址，就是服务端 buf 地址
-    wr.rdma.rkey = remote_rkey;      // 远程 rkey，服务端给的
+    wr.wr.rdma.remote_addr = remote_addr; // 远程地址，就是服务端 buf 地址
+    wr.wr.rdma.rkey = remote_rkey;      // 远程 rkey，服务端给的
     wr.next = NULL;
 
     // --------------------------
@@ -234,11 +236,12 @@ int main(int argc, char** argv) {
         if (n == 1) {
             if (wc.status != IBV_WC_SUCCESS) {
                 fprintf(stderr, "RDMA Write failed: %s\n", ibv_wc_status_str(wc.status));
-            done = 1;
-            ret = 1;
-        } else {
-            printf("Client: RDMA Write completed successfully!\n");
-            done = 1;
+                done = 1;
+                ret = 1;
+            } else {
+                printf("Client: RDMA Write completed successfully!\n");
+                done = 1;
+            }
         }
     }
 
