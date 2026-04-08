@@ -4,32 +4,45 @@
 
 本章讲解如何在 Kubernetes 环境中运行分布式 MPI 训练任务，使用 PyTorchJob 进行编排。
 
-## 知识点
+## 为什么需要 Kubernetes？
 
-### 为什么需要 Kubernetes + MPI？
-- **弹性扩展**：按需申请和释放计算资源
-- **资源隔离**：容器化环境，资源独立
-- **自动恢复**：故障自动重试
-- **多租户**：支持多用户共享集群
+### 传统方式的问题
 
-### PyTorchJob 原理
-- **Kubeflow**：Kubernetes 上的机器学习工具包
-- **PyTorchJob**：Kubeflow 中的 PyTorch 分布式训练 operator
-- **Master/Worker**：训练进程角色划分
-- **故障恢复**：Worker 失败自动重启
+- **手动管理机器**：需要维护机器列表
+- **资源利用率低**：机器可能闲置
+- **故障处理麻烦**：需要手动重启
+- **扩展困难**：增加机器需要改配置
 
-### 架构对比
-- **传统模式**：固定机器，手动启动
-- **Kubernetes 模式**：声明式配置，自动调度
+### Kubernetes 优势
 
-### 关键配置
-- **ReplicaSpec**：指定 Master/Worker 数量
-- **GPU 配置**：`nvidia.com/gpu: 1`
-- **环境变量**：`WORLD_SIZE`, `RANK`, `MASTER_ADDR`
+| 特性 | 传统方式 | Kubernetes |
+|------|----------|------------|
+| 资源管理 | 手动 | 自动 |
+| 故障恢复 | 手动 | 自动 |
+| 扩展性 | 困难 | 简单 |
+| 调度 | 手动 | 自动 |
 
-## 核心概念
+## 基本概念
 
-### PyTorchJob YAML
+### Kubernetes (K8s)
+
+容器编排系统：
+- **Pod**：最小调度单元（一个或多个容器）
+- **Node**：工作节点（服务器）
+- **Master**：控制节点
+- **Service**：服务发现和负载均衡
+
+### Kubeflow
+
+机器学习工具包，包含：
+- **PyTorchJob**：PyTorch 分布式训练 operator
+- **TFJob**：TensorFlow 训练 operator
+- **Katib**：超参数调优
+
+### PyTorchJob
+
+Kubeflow 中的 PyTorch 分布式训练 CRD：
+
 ```yaml
 apiVersion: "kubeflow.org/v1"
 kind: "PyTorchJob"
@@ -43,7 +56,7 @@ spec:
         spec:
           containers:
           - name: pytorch
-            image: pytorch:latest
+            image: pytorch/pytorch:1.13.1-cuda11.6-cudnn8-runtime
             resources:
               limits:
                 nvidia.com/gpu: 1
@@ -53,33 +66,153 @@ spec:
         spec:
           containers:
           - name: pytorch
-            image: pytorch:latest
+            image: pytorch/pytorch:1.13.1-cuda11.6-cudnn8-runtime
             resources:
               limits:
                 nvidia.com/gpu: 1
 ```
 
+## 核心机制
+
+### 角色分配
+
+| 角色 | 职责 |
+|------|------|
+| **Master** | 协调工作，协调训练 |
+| **Worker** | 执行实际训练 |
+
+### 环境变量
+
+PyTorchJob 自动设置：
+
+| 变量 | 说明 |
+|------|------|
+| `WORLD_SIZE` | 总进程数 |
+| `RANK` | 当前进程全局 ID |
+| `LOCAL_RANK` | 当前节点内 ID |
+| `MASTER_ADDR` | Master Pod 地址 |
+| `MASTER_PORT` | 通信端口 |
+
 ### 训练脚本
+
 ```python
 import os
+import torch
 import torch.distributed as dist
 
+# 1. 获取进程信息
 rank = int(os.environ['RANK'])
+local_rank = int(os.environ.get('LOCAL_RANK', 0))
 world_size = int(os.environ['WORLD_SIZE'])
 master_addr = os.environ['MASTER_ADDR']
+master_port = os.environ.get('MASTER_PORT', '29500')
 
-dist.init_process_group(backend='nccl', 
-                       init_method='env://',
-                       world_size=world_size,
-                       rank=rank)
+# 2. 初始化分布式环境
+os.environ['MASTER_ADDR'] = master_addr
+os.environ['MASTER_PORT'] = master_port
+
+dist.init_process_group(backend='nccl')
+
+# 3. 设置 GPU
+torch.cuda.set_device(local_rank)
+device = torch.device(f'cuda:{local_rank}')
+
+# 4. 创建模型并移动到 GPU
+model = MyModel().to(device)
+model = torch.nn.parallel.DistributedDataParallel(
+    model, device_ids=[local_rank]
+)
+
+# 5. 训练
+for data, target in dataloader:
+    data, target = data.to(device), target.to(device)
+    output = model(data)
+    loss = loss_fn(output, target)
+    loss.backward()
+    optimizer.step()
 ```
 
-## 学习目标
+## 部署步骤
 
-1. 理解 Kubernetes 上运行分布式训练的优势
-2. 掌握 PyTorchJob 的配置和使用
-3. 学会编写训练脚本和环境变量配置
-4. 理解故障恢复机制
+### 1. 安装 Kubeflow
+
+```bash
+# 安装 kustomize
+curl -s "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash
+
+# 安装 Kubeflow
+kustomize build example | kubectl apply -f -
+```
+
+### 2. 提交 PyTorchJob
+
+```bash
+kubectl apply -f pytorchjob.yaml
+```
+
+### 3. 查看状态
+
+```bash
+# 查看 Pod 状态
+kubectl get pods -l job-name=pytorch-distributed-job
+
+# 查看日志
+kubectl logs -l job-name=pytorch-distributed-job -c pytorch
+
+# 查看 PyTorchJob 状态
+kubectl get pytorchjob pytorch-distributed-job
+```
+
+### 4. 故障排查
+
+```bash
+# 查看事件
+kubectl describe pytorchjob pytorch-distributed-job
+
+# 查看 worker 日志
+kubectl logs pytorch-distributed-job-worker-0 -c pytorch
+```
+
+## 多节点训练
+
+### 主机网络模式
+
+```
+┌─────────────────┐     ┌─────────────────┐
+│   Node 1        │     │   Node 2        │
+│  ┌───────────┐  │     │  ┌───────────┐  │
+│  │ Worker 0  │──┼─────┼─│ Worker 1  │  │
+│  │ (GPU 0)   │  │     │  │ (GPU 0)   │  │
+│  └───────────┘  │     │  └───────────┘  │
+│  ┌───────────┐  │     │  ┌───────────┐  │
+│  │ Worker 2  │──┼─────┼─│ Worker 3  │  │
+│  │ (GPU 1)   │  │     │  │ (GPU 1)   │  │
+│  └───────────┘  │     │  └───────────┘  │
+└─────────────────┘     └─────────────────┘
+```
+
+### RDMA 支持
+
+在 K8s 中启用 RDMA：
+
+```yaml
+apiVersion: v1
+kind: Pod
+spec:
+  containers:
+  - name: rdma-container
+    image: rdma-image
+    resources:
+      limits:
+        rdma/ib mlx5: 1  # 请求 RDMA 设备
+```
+
+## 本章测验
+
+- [ ] 理解 Kubernetes 上的分布式训练优势
+- [ ] 掌握 PyTorchJob 配置
+- [ ] 能编写支持 K8s 的训练脚本
+- [ ] 理解故障恢复机制
 
 ## 下一步
 
