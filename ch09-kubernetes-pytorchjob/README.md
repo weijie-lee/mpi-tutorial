@@ -214,6 +214,41 @@ spec:
 - [ ] 能编写支持 K8s 的训练脚本
 - [ ] 理解故障恢复机制
 
+## 示例代码
+
+本章配套示例在 `09-pytorchjob/` 目录：
+
+```bash
+cd ch09-kubernetes-pytorchjob/09-pytorchjob
+```
+
+文件说明：
+- `pytorchjob.yaml` - PyTorchJob 配置文件
+- `train.py` - 分布式训练脚本
+- `Dockerfile` - 训练镜像
+
+### 使用方法
+
+1. **构建镜像**
+```bash
+docker build -t my-pytorch-job:latest .
+```
+
+2. **提交任务**
+```bash
+kubectl apply -f pytorchjob.yaml
+```
+
+3. **查看状态**
+```bash
+kubectl get pods -l job-name=pytorch-distributed-job
+```
+
+4. **查看日志**
+```bash
+kubectl logs pytorch-distributed-job-master-0 -c pytorch
+```
+
 ## 下一步
 
 学完本章后，进入 [第十章：全链路观测](./ch10-fullstack-observe/README.md) 学习端到端性能观测。

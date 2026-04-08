@@ -248,6 +248,19 @@ MPI_ERR_TRUNCATE: message truncated
 - [ ] 理解性能优化策略
 - [ ] 能排查常见问题
 
+## 示例代码
+
+本章配套示例在 `07-debug/` 目录：
+
+```bash
+cd ch07-optimize/07-debug
+mpicc -O3 -o allreduce_bench allreduce_bench.c
+mpirun -np 4 ./allreduce_bench
+```
+
+- `allreduce_bench.c` - AllReduce 性能基准测试
+- `blocking_vs_nonblocking.c` - 阻塞 vs 非阻塞通信对比
+
 ## 下一步
 
 学完本章后，进入 [第八章：RDMA Verbs 编程](./ch08-rdma-verbs/README.md) 学习 RDMA 原生编程。
