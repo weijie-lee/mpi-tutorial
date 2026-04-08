@@ -15,135 +15,71 @@
 - ✅ **全链路可观测**：提供从 PyTorch API 到 RDMA 网卡的完整调用链路观测工具
 - ✅ **实用优化建议**：包含调试、性能优化要点，帮你避开常见坑
 
-## 目录结构
+## 目录结构（按章节划分）
 
 ```
 mpi-tutorial/
-├── README.md           # 本文件
-├── docs/               # 文档（按章节）
-│   ├── 01-intro.md     # 基础概念入门
-│   ├── 02-core.md      # 核心编程模型（点对点+集合通信）
-│   ├── 03-advanced.md  # 进阶核心主题（派生类型、拓扑、RMA等）
-│   ├── 04-hardware.md  # GPU 与 RDMA 支持（CUDA-aware MPI）
-│   ├── 05-stack.md     # NCCL 与 PyTorch 结合（DDP分布式训练）
-│   ├── 06-applications.md # 完整应用实例：二维Jacobi迭代
-│   ├── 07-optimize.md  # 实现环境与调试优化（调试+性能调优）
-│   ├── 08-rdma-verbs.md # RDMA Verbs 原生编程入门
-│   ├── 09-kubernetes-pytorchjob.md # Kubernetes 上运行 MPI：PyTorchJob 实战
-│   └── 10-fullstack-observe.md # PyTorch → NCCL → RDMA 全链路观测实战 ⭐ NEW
-└── examples/           # 可运行示例代码
-    ├── 01-basics/      # 基础示例（hello、计时、错误处理）
-    ├── 02-core/        # 核心通信示例（sendrecv、死锁、非阻塞、集合通信、pi计算）
-    ├── 03-advanced/    # 进阶示例（派生类型、笛卡尔拓扑、通信域分裂、RMA）
-    ├── 04-hardware/    # GPU/RDMA 示例（CUDA-aware MPI + RDMA Write）
-    ├── 05-pytorch/     # PyTorch 示例（MPI初始化、DDP分布式训练）
-    ├── 06-applications/# 完整应用（Jacobi二维迭代并行求解泊松方程）
-    ├── 08-rdma-verbs/  # RDMA Verbs 原生编程示例（server/client）
-    ├── 10-fullstack-observe/ # 全链路观测脚本（RDMA/TCP 对比测试） ⭐ NEW
-    └── build_examples.sh # 一键编译所有C/C++/CUDA示例
+├── ch01-intro/                    # 基础概念入门
+│   ├── README.md                  # 章节介绍与知识点
+│   └── 01-basics/                 # 示例代码
+├── ch02-core/                     # 核心编程模型
+│   ├── README.md
+│   └── 02-core/
+├── ch03-advanced/                 # 进阶核心主题
+│   ├── README.md
+│   └── 03-advanced/
+├── ch04-hardware/                 # GPU 与 RDMA 支持
+│   ├── README.md
+│   └── 04-hardware/
+├── ch05-stack/                    # NCCL 与 PyTorch 结合
+│   ├── README.md
+│   └── 05-pytorch/
+├── ch06-applications/             # 完整应用实例
+│   ├── README.md
+│   └── 06-applications/
+├── ch07-optimize/                 # 环境与调试优化
+│   └── README.md
+├── ch08-rdma-verbs/               # RDMA Verbs 编程
+│   ├── README.md
+│   └── 08-rdma-verbs/
+├── ch09-kubernetes-pytorchjob/    # Kubernetes 部署
+│   └── README.md
+└── ch10-fullstack-observe/        # 全链路观测实战
+    ├── README.md
+    └── 10-fullstack-observe/
 ```
 
 ## 学习路径
 
 按顺序阅读跟着跑代码最快：
 
-1. **入门**：先阅读 [01-intro.md](docs/01-intro.md) 了解基础概念，在你的环境上跑通第一个示例，确认MPI环境正常
-2. **核心**：阅读 [02-core.md](docs/02-core.md)，理解点对点通信和集合通信，把里面的示例都跑一遍
-3. **进阶**：根据需要选读 [03-advanced.md](docs/03-advanced.md) 里的进阶主题
-4. **硬件加速**：如果你有GPU/RDMA，一定要看 [04-hardware.md](docs/04-hardware.md)，理解GPU直接通信怎么工作
-5. **深度学习**：看多节点多GPU训练，看 [05-stack.md](docs/05-stack.md)，理解MPI+NCCL+PyTorch分工
-6. **完整应用**：看 [06-applications.md](docs/06-applications.md)，学习如何把一个完整问题并行化
-7. **调优**：遇到性能问题，看 [07-optimize.md](docs/07-optimize.md) 调试优化
-8. **原生RDMA编程**：想直接写RDMA程序，看 [08-rdma-verbs.md](docs/08-rdma-verbs.md)
-9. **Kubernetes/PyTorchJob**：在Kubernetes上运行MPI分布式训练，看 [09-kubernetes-pytorchjob.md](docs/09-kubernetes-pytorchjob.md)
-10. **全链路观测** ⭐：看 [10-fullstack-observe.md](docs/10-fullstack-observe.md)，亲眼观测 `dist.all_reduce()` 如何经过 NCCL 最终调用 RDMA Verbs API，并对比 RDMA vs TCP 的性能差异
+1. **[ch01-intro](./ch01-intro/)** - 基础概念入门：了解 MPI 是什么，为什么需要它
+2. **[ch02-core](./ch02-core/)** - 核心编程模型：点对点+集合通信编程
+3. **[ch03-advanced](./ch03-advanced/)** - 进阶主题：派生类型、拓扑、RMA
+4. **[ch04-hardware](./ch04-hardware/)** - GPU 与 RDMA：CUDA-aware MPI、RDMA 基础
+5. **[ch05-stack](./ch05-stack/)** - NCCL 与 PyTorch：DDP 分布式训练
+6. **[ch06-applications](./ch06-applications/)** - 完整应用：二维 Jacobi 迭代
+7. **[ch07-optimize](./ch07-optimize/)** - 调试优化：编译运行、调试、性能分析
+8. **[ch08-rdma-verbs](./ch08-rdma-verbs/)** - RDMA Verbs 编程
+9. **[ch09-kubernetes-pytorchjob](./ch09-kubernetes-pytorchjob/)** - Kubernetes 部署
+10. **[ch10-fullstack-observe](./ch10-fullstack-observe/)** - 全链路观测实战 ⭐ NEW
 
-### 推荐的深度学习方向快速路径
+## 快速开始
 
-如果你主要关注**多节点多GPU训练**，可以按这个顺序快速上手：
-
-```
-04-hardware.md (RDMA 原理)
-    → 05-stack.md (NCCL + PyTorch 分工)
-    → 10-fullstack-observe.md (全链路观测实战)  ⭐
-    → 08-rdma-verbs.md (想深入了解底层)
-    → 09-kubernetes-pytorchjob.md (生产部署)
-```
-
-## 第一步：检查你的环境
-
-先确认你的MPI是否支持需要的特性：
-
+### 编译示例
 ```bash
-# 检查 MPI 版本
-mpicc --version
+cd ch02-core/02-core
+make
+```
 
-# 检查 OpenMPI 是否支持 CUDA
-ompi_info --parsable | grep cuda
-# 应该看到 "cuda:support = 1"
-
-# 检查是否支持 RDMA/Verbs
-ompi_info --parsable | grep verbs
-# 有输出说明支持RDMA
-
-# 检查 RDMA 设备（第十章观测实验需要）
-ibv_devinfo
-# 会列出所有 RDMA 设备
+### 运行示例
+```bash
+mpirun -np 4 ./hello_mpi
 ```
 
 ## 环境要求
 
-| 组件 | 要求 | 说明 |
-|------|------|------|
-| MPI 实现 | OpenMPI 4.0+ | 推荐，对GPU/RDMA支持好，社区活跃 |
-| C编译器 | gcc 7+ / clang 6+ | 编译C示例 |
-| CUDA | CUDA 11+（可选）| 编译GPU示例需要 |
-| PyTorch | PyTorch 1.10+（可选）| 运行Python示例需要 |
-| NCCL | 最新版（可选）| PyTorch多GPU通信需要 |
-| libibverbs-dev | libibverbs-dev（可选）| RDMA Verbs编程示例需要 |
-
-本教程在 **RoCE v2 RDMA 网络 + NVIDIA A100 GPU + OpenMPI 4.1.5 + CUDA 11.8** 环境测试过。
-
-## 快速开始编译所有示例
-
-```bash
-git clone https://github.com/weijie-lee/mpi-tutorial.git
-cd mpi-tutorial/examples
-chmod +x build_examples.sh
-./build_examples.sh
-```
-
-然后就可以跑各个示例了，比如：
-
-```bash
-# 跑 Monte Carlo 计算 π 示例
-cd 02-core
-mpirun -np 4 ./pi_monte_carlo
-
-# 跑全链路观测脚本（第十章）
-cd 10-fullstack-observe
-mpirun -np 2 python pytorch_nccl_rdma_demo.py
-```
-
-## 章节要点速览
-
-| 章节 | 内容 |
-|------|------|
-| [01-intro.md](docs/01-intro.md) | 什么是MPI，MPI发展史，MPI vs OpenMP，环境检查，第一个程序 |
-| [02-core.md](docs/02-core.md) | 点对点通信（阻塞/非阻塞），死锁，集合通信（Bcast/Scatter/Gather/Reduce/Allreduce），完整计算 π 示例 |
-| [03-advanced.md](docs/03-advanced.md) | 派生数据类型，虚拟拓扑，通信域分裂，单侧通信（RMA），MPI-IO |
-| [04-hardware.md](docs/04-hardware.md) | CUDA-aware MPI 原理和示例，RDMA 原理和优势，如何检查支持 |
-| [05-stack.md](docs/05-stack.md) | MPI vs NCCL 分工，PyTorch DDP 如何配合 MPI，完整多节点多GPU训练示例 |
-| [06-applications.md](docs/06-applications.md) | 完整应用：二维Jacobi迭代并行求解泊松方程，讲解域分解和边界交换 |
-| [07-optimize.md](docs/07-optimize.md) | 各种MPI实现对比，编译运行方法，调试工具，性能优化要点 |
-| [08-rdma-verbs.md](docs/08-rdma-verbs.md) | RDMA Verbs 原生编程入门，完整 client/server 可运行示例 |
-| [09-kubernetes-pytorchjob.md](docs/09-kubernetes-pytorchjob.md) | 在 Kubernetes 上通过 PyTorchJob 运行 MPI 分布式训练，完整可运行示例 |
-| [10-fullstack-observe.md](docs/10-fullstack-observe.md) ⭐ | **全链路观测实战**：从 `dist.all_reduce()` 到 RDMA NIC 的完整调用链路，NCCL 日志逐行解读，RDMA vs TCP 性能对比，环境变量速查表 |
-
-## 贡献
-
-欢迎提 Issue 和 Pull Request！
-
-## 许可证
-
-MIT
+- Linux 系统
+- MPI 实现（OpenMPI 4.x 推荐）
+- 可选：CUDA（GPU 示例）
+- 可选：RDMA 网卡（RDMA 示例）
