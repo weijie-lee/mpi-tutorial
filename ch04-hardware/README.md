@@ -77,7 +77,7 @@ RDMA：数据 → 直接写入目标内存（绕过内核）
 
 | 指标 | 传统 TCP | RDMA |
 |------|----------|------|
-| 延迟 | 10-20 μs | 1-2 μs |
+| 延迟 | 约 10–20 μs | 约 1–2 μs |
 | CPU 占用 | 高 | 极低 |
 | 带宽 | 10-25 Gbps | 100+ Gbps |
 
@@ -145,14 +145,17 @@ ib_send_bw -d mlx5_0 -a
 ```bash
 cd ch04-hardware/04-hardware
 
-# CUDA-aware 示例
-mpicc -o cuda_aware cuda_aware.cu -lcudart
+# CUDA-aware 示例需要本机 CUDA，并且 MPI 本身支持 GPU 缓冲
+nvcc -c cuda_aware.cu -o cuda_aware.o
+mpicxx cuda_aware.o -o cuda_aware -lcudart
 
-# RDMA 示例
+# RDMA Write。TCP 只交换 QP 和 rkey，载荷走 verbs。
 make
-./rdma_write_server &
-./rdma_write_client
+./rdma_write_server 18515 &
+./rdma_write_client 127.0.0.1 18515
 ```
+
+没有 active 的 verbs 端口时，两个程序都打印 `RESULT: SKIP`。不要把自建的 `ibv_qp` 直接塞进 `rdma_cm`：连接管理器要自己创建 QP，并走地址解析、路由解析和 connect。QP 必须经过 INIT、RTR、RTS，发送要带 `IBV_SEND_SIGNALED`。上表的延迟和带宽是常见数量级，本仓库在没有 RDMA 网卡的机器上没有测出这些数。
 
 - `cuda_aware.cu` - CUDA-aware MPI
 - `rdma_write_server.c` / `rdma_write_client.c` - RDMA Write
@@ -166,4 +169,4 @@ make
 
 ## 下一步
 
-学完本章后，进入 [第五章：上层栈结合](./ch05-stack/README.md) 学习 NCCL 与 PyTorch 的结合。
+学完本章后，进入 [第五章：上层栈结合](../ch05-stack/README.md)。Verbs 状态机见 [基础知识补充](../docs/基础知识补充.md)。

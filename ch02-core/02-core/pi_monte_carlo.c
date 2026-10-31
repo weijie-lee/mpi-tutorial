@@ -48,15 +48,23 @@ int main(int argc, char** argv) {
 
     // --------------------------
     // rank 0 计算最终 π 并输出结果
+    int failed = 0;
     if (rank == 0) {
         long long total_points = points_per_proc * size;
         double pi = 4.0 * (double)global_inside / (double)total_points;
+        double error = pi - 3.141592653589793;
         printf("Total points: %lld\n", total_points);
         printf("Estimated pi = %.10f\n", pi);
         printf("Real    pi = 3.1415926535...\n");
-        printf("Error   = %.10f\n", pi - 3.1415926535);
+        printf("Error   = %.10f\n", error);
+        // 800000 个点时标准误差大约是 0.002。0.03 留出随机种子波动，同时能抓住归约写错。
+        if (total_points < 100000 || error > 0.03 || error < -0.03) {
+            fprintf(stderr, "pi estimate is outside +/- 0.03\n");
+            failed = 1;
+        }
+        printf("RESULT: %s\n", failed ? "FAIL" : "PASS");
     }
 
     MPI_Finalize();
-    return 0;
+    return failed ? 1 : 0;
 }

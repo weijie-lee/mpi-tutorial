@@ -1,20 +1,14 @@
-# 训练镜像 Dockerfile
-FROM pytorch/pytorch:1.13.1-cuda11.6-cudnn8-runtime
+# 训练镜像。PyTorchJob 每个 Pod 直接执行 python，不需要在容器里再套 mpirun。
+FROM pytorch/pytorch:2.4.1-cuda12.1-cudnn9-runtime
 
-# 安装 MPI 和 NCCL
-RUN apt-get update && apt-get install -y \
-    openmpi \
-    libopenmpi-dev \
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        openmpi-bin \
+        libopenmpi-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# 设置工作目录
 WORKDIR /workspace
+COPY train.py /workspace/train.py
 
-# 复制训练脚本
-COPY train.py /workspace/
-
-# 设置 MPI 环境
 ENV PYTHONUNBUFFERED=1
 
-# 启动命令（由 mpirun 覆盖）
 CMD ["python", "/workspace/train.py"]

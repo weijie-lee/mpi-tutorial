@@ -1,8 +1,11 @@
-apiVersion: "kubeflow.org/v1"
-kind: "PyTorchJob"
+# Kubeflow Training Operator 会注入 RANK、WORLD_SIZE、LOCAL_RANK、MASTER_ADDR、MASTER_PORT。
+# 不要在这里写死 WORLD_SIZE，否则修改 replicas 后进程组大小会和真实 Pod 数不一致。
+# 镜像里已经包含 train.py，不依赖额外的 PVC。
+apiVersion: kubeflow.org/v1
+kind: PyTorchJob
 metadata:
-  name: "pytorch-distributed-job"
-  namespace: "kubeflow"
+  name: pytorch-distributed-job
+  namespace: kubeflow
 spec:
   pytorchReplicaSpecs:
     Master:
@@ -11,55 +14,23 @@ spec:
       template:
         spec:
           containers:
-          - name: pytorch
-            image: pytorch/pytorch:1.13.1-cuda11.6-cudnn8-runtime
-            imagePullPolicy: IfNotPresent
-            command:
-            - python
-            - /workspace/train.py
-            env:
-            - name: MASTER_ADDR
-              value: "pytorch-distributed-job-master-0"
-            - name: MASTER_PORT
-              value: "29500"
-            - name: WORLD_SIZE
-              value: "3"
-            resources:
-              limits:
-                nvidia.com/gpu: 1
-          volumes:
-          - name: workspace
-            persistentVolumeClaim:
-              claimName: workspace-pvc
-          volumeMounts:
-          - name: workspace
-            mountPath: /workspace
+            - name: pytorch
+              image: mpi-tutorial-pytorch:latest
+              imagePullPolicy: IfNotPresent
+              command: ["python", "/workspace/train.py"]
+              resources:
+                limits:
+                  nvidia.com/gpu: "1"
     Worker:
       replicas: 2
       restartPolicy: OnFailure
       template:
         spec:
           containers:
-          - name: pytorch
-            image: pytorch/pytorch:1.13.1-cuda11.6-cudnn8-runtime
-            imagePullPolicy: IfNotPresent
-            command:
-            - python
-            - /workspace/train.py
-            env:
-            - name: MASTER_ADDR
-              value: "pytorch-distributed-job-master-0"
-            - name: MASTER_PORT
-              value: "29500"
-            - name: WORLD_SIZE
-              value: "3"
-            resources:
-              limits:
-                nvidia.com/gpu: 1
-          volumes:
-          - name: workspace
-            persistentVolumeClaim:
-              claimName: workspace-pvc
-          volumeMounts:
-          - name: workspace
-            mountPath: /workspace
+            - name: pytorch
+              image: mpi-tutorial-pytorch:latest
+              imagePullPolicy: IfNotPresent
+              command: ["python", "/workspace/train.py"]
+              resources:
+                limits:
+                  nvidia.com/gpu: "1"

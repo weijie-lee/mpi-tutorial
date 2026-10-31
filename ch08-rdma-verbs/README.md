@@ -27,8 +27,9 @@ RDMA Verbs 是 RDMA 硬件的编程接口，类似于：
 打开 RDMA 设备：
 
 ```c
-struct ibv_context *context;
-context = ibv_open_device(NULL);  // 打开第一个设备
+int num = 0;
+struct ibv_device **list = ibv_get_device_list(&num);
+struct ibv_context *context = ibv_open_device(list[0]);  // 参数是 ibv_device*，不是 NULL
 ```
 
 ### 2. IBV_pd（保护域）
@@ -174,21 +175,15 @@ INIT → RTR (Ready To Receive) → RTS (Ready To Send)
          └──────── RESET ←─────────┘
 ```
 
-```c
-// INIT → RTR
-struct ibv_qp_attr attr = {
-    .qp_state = IBV_QPS_RTR,
-    .path_mtu = IBV_MTU_256,
-    .dest_qp_num = remote_qp_num,
-    .rq_psn = 0,
-};
-ibv_modify_qp(qp, &attr, IBV_QP_STATE);
+跳过 INIT 时，直接改到 RTR 会失败。RTS 还要带 timeout、retry_cnt 和 rnr_retry。RoCE 上 LID 经常是 0，地址句柄要走 GID，并且 `hop_limit` 至少为 1。
 
-// RTR → RTS
-attr.qp_state = IBV_QPS_RTS;
-attr.sq_psn = 0;
-ibv_modify_qp(qp, &attr, IBV_QP_STATE);
+```c
+/* RESET → INIT：端口、pkey、访问权限 */
+/* INIT → RTR：对端 QP、PSN、MTU、地址句柄 */
+/* RTR → RTS：本端 PSN、timeout、retry、rnr_retry */
 ```
+
+示例用 TCP 交换 `qpn`、LID、rkey、地址和 GID。以前靠人手抄两行格式不一致的 GID，对端 QP 根本建不起来。
 
 ## 示例代码
 
@@ -197,17 +192,15 @@ ibv_modify_qp(qp, &attr, IBV_QP_STATE);
 ```bash
 cd ch08-rdma-verbs/08-rdma-verbs
 make
-
-# 运行 server
-./rdma_write_server
-
-# 另一个终端运行 client
-./rdma_write_client
+./server 18516 &
+./client 127.0.0.1 18516
 ```
 
-- `server.c` - RDMA Server
-- `client.c` - RDMA Client  
-- `common.h` - 公共定义
+没有 active 端口时打印 `RESULT: SKIP`。有设备时，客户端依次做 Send、RDMA Write 和 RDMA Read，服务端检查 Send 的内容和偏移 512 上的 Write。
+
+- `server.c` - 投递 Receive，再检查 RDMA Write
+- `client.c` - Send、RDMA Write、RDMA Read
+- `common.h` - INIT / RTR / RTS 和带外交换
 
 ## 本章测验
 
@@ -218,4 +211,4 @@ make
 
 ## 下一步
 
-学完本章后，进入 [第九章：Kubernetes 部署](./ch09-kubernetes-pytorchjob/README.md) 学习在 K8s 上运行 MPI 任务。
+学完本章后，进入 [第九章：Kubernetes 部署](../ch09-kubernetes-pytorchjob/README.md)。状态机和带外交换见 [基础知识补充](../docs/基础知识补充.md)。

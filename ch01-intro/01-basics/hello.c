@@ -39,10 +39,25 @@ int main(int argc, char** argv) {
     MPI_Get_processor_name(hostname, &len);
     printf("Hello MPI! I'm rank %d / %d on host: %s\n", rank, size, hostname);
 
+    // 用归约核对 rank 是否齐全：0+1+...+(size-1) = size*(size-1)/2。
+    // 这一步不依赖输出顺序，适合作为自动化验证。
+    long long rank_value = rank;
+    long long rank_sum = 0;
+    MPI_Reduce(&rank_value, &rank_sum, 1, MPI_LONG_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
+    int failed = 0;
+    if (rank == 0) {
+        long long expected = (long long)size * (size - 1) / 2;
+        if (rank_sum != expected) {
+            fprintf(stderr, "rank sum %lld != expected %lld\n", rank_sum, expected);
+            failed = 1;
+        }
+        printf("RESULT: %s\n", failed ? "FAIL" : "PASS");
+    }
+
     // --------------------------
     // 最后一步：必须结束 MPI 环境
     // 清理所有 MPI 分配的资源
     // MPI_Finalize 之后不能再调用任何 MPI 函数
     MPI_Finalize();
-    return 0;
+    return failed ? 1 : 0;
 }

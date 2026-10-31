@@ -1,49 +1,65 @@
 // examples/01-basics/error_handling.c
-// 演示 MPI 错误处理基本用法
-// 默认情况下，MPI 出错会直接终止整个程序
-// 我们可以改成让错误返回给我们，自己处理
+// 演示 MPI 错误处理：默认错误会终止全部进程，改成 RETURN 后由程序自己处理。
 // 编译：mpicc -O2 -o error_handling error_handling.c
 // 运行：mpirun -np 2 ./error_handling
 
 #include <mpi.h>
 #include <stdio.h>
 
-int main(int argc, char** argv) {
-    int err;  // 存储 MPI 调用返回的错误码
+static void print_error(const char *where, int err) {
+    char errstr[MPI_MAX_ERROR_STRING];
+    int errlen = 0;
+    MPI_Error_string(err, errstr, &errlen);
+    printf("%s -> code %d (%s)\n", where, err, errstr);
+}
 
-    // 初始化 MPI，返回错误码
-    err = MPI_Init(&argc, &argv);
-    
-    // --------------------------
-    // 修改默认错误处理行为
-    // 默认：MPI_ERRORS_ARE_FATAL → 任何错误直接终止整个程序
-    // 改成：MPI_ERRORS_RETURN → 错误码返回给调用者，我们自己处理
-    // 注意：MPI_Errhandler_set 在 MPI-2 之后就废弃了，新版使用 MPI_Comm_set_errhandler
-    MPI_Comm_set_errhandler(MPI_COMM_WORLD, MPI_ERRORS_RETURN);
-    
-    int rank;
-    // 调用 MPI_Comm_rank，获取错误码
-    err = MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-    
-    // --------------------------
-    // 检查错误码，如果不是 MPI_SUCCESS 就是出错了
+int main(int argc, char **argv) {
+    int err = MPI_Init(&argc, &argv);
     if (err != MPI_SUCCESS) {
-        // MPI 提供了获取错误信息字符串的函数
-        char errstr[BUFSIZ];  // 存储错误信息
-        int errlen;            // 错误信息长度
-        // 获取错误信息字符串
-        MPI_Error_string(err, errstr, &errlen);
-        // 打印错误信息
-        fprintf(stderr, "MPI Error when calling MPI_Comm_rank: %s\n", errstr);
-        // 出错了，调用 MPI_Abort 终止所有进程
-        // MPI_Abort 会立即终止整个 communicator 里的所有进程
+        fprintf(stderr, "MPI_Init failed: %d\n", err);
+        return 1;
+    }
+
+    // 默认 MPI_ERRORS_ARE_FATAL：出错直接终止所有进程。
+    // MPI_ERRORS_RETURN：把错误码交还给调用者。MPI_Errhandler_set 已废弃。
+    MPI_Comm_set_errhandler(MPI_COMM_WORLD, MPI_ERRORS_RETURN);
+
+    int rank = -1;
+    int size = 0;
+    err = MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    if (err != MPI_SUCCESS) {
+        print_error("MPI_Comm_rank", err);
+        MPI_Abort(MPI_COMM_WORLD, 1);
+    }
+    err = MPI_Comm_size(MPI_COMM_WORLD, &size);
+    if (err != MPI_SUCCESS) {
+        print_error("MPI_Comm_size", err);
         MPI_Abort(MPI_COMM_WORLD, 1);
     }
 
-    // 如果走到这里说明没出错，打印正常信息
-    printf("No error, rank = %d\n", rank);
+    printf("No error on the success path, rank = %d / %d\n", rank, size);
 
-    // 正常结束
+    // 故意使用非法 rank。正确安装了错误处理器时，这里返回 MPI_ERR_RANK，
+    // 进程不会被集体杀掉，后面的检查才能执行。
+    int payload = rank;
+    err = MPI_Send(&payload, 1, MPI_INT, /*dest=*/size, 0, MPI_COMM_WORLD);
+    int saw_rank_error = (err == MPI_ERR_RANK);
+
+    // 非法通信域。MPI_COMM_NULL 不能拿来查询 rank。
+    int ignored = 0;
+    int err_comm = MPI_Comm_rank(MPI_COMM_NULL, &ignored);
+    int saw_comm_error = (err_comm == MPI_ERR_COMM);
+
+    if (rank == 0) {
+        print_error("MPI_Send to rank == size", err);
+        print_error("MPI_Comm_rank(MPI_COMM_NULL)", err_comm);
+        int failed = !(saw_rank_error && saw_comm_error);
+        if (failed) {
+            fprintf(stderr, "expected MPI_ERR_RANK and MPI_ERR_COMM\n");
+        }
+        printf("RESULT: %s\n", failed ? "FAIL" : "PASS");
+    }
+
     MPI_Finalize();
     return 0;
 }

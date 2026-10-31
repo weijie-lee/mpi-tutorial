@@ -22,6 +22,17 @@ jacobi2d
 server
 client
 
+all-collectives
+vector_indexed
+pingpong
+allreduce_bench
+blocking_vs_nonblocking
+
+build/
+__pycache__/
+*.pyc
+benchmark-out/
+
 # IDE
 .vscode/
 .idea/

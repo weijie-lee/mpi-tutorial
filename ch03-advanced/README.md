@@ -45,14 +45,13 @@ MPI_Send(buf, 1, int_array, dest, tag, comm);
 
 适合**列优先**存储的矩阵：
 
-```c
-// 每行 10 个元素，共 5 行，跳过 10 个元素取下一行
-MPI_Datatype row_type;
-MPI_Type_vector(5, 10, 10, MPI_DOUBLE, &row_type);
-MPI_Type_commit(&row_type);
+`stride` 的单位是元素个数。`MPI_Type_vector(5, 10, 10, ...)` 是 5 段各 10 个元素、段间距也是 10，也就是一块连续内存，不是一列。列向量是每段 1 个元素、间距为行宽：
 
-// 发送一整列（逻辑上连续）
-MPI_Send(matrix, 1, row_type, dest, tag, comm);
+```c
+MPI_Datatype column;
+MPI_Type_vector(nrows, 1, ncols, MPI_DOUBLE, &column);
+MPI_Type_commit(&column);
+MPI_Send(&matrix[0][column_index], 1, column, dest, tag, comm);
 ```
 
 ### 索引类型
@@ -137,29 +136,24 @@ A: 直接写入 B 的内存
 | **Get** | 读取远程内存 |
 | **Fence** | 同步机制 |
 
+`MPI_Get` 写入的本地缓冲，要等这个访问纪元结束之后才能读。在下一次 `MPI_Win_fence` 之前打印它，内容没有定义。窗口内存用 `MPI_Win_allocate` 分配；把栈上的变量交给 `MPI_Win_create`，有的 OpenMPI 组件会返回 `MPI_ERR_WIN`。
+
 ### 使用流程
 
 ```c
-// 1. 创建窗口（每个进程提供一块共享内存）
 MPI_Win win;
-MPI_Alloc_mem(1024, MPI_INFO_NULL, &local_buffer);
-MPI_Win_create(local_buffer, 1024, 1, MPI_INFO_NULL, 
-               MPI_COMM_WORLD, &win);
+int *data = NULL;
+MPI_Win_allocate(sizeof(int), sizeof(int), MPI_INFO_NULL,
+                 MPI_COMM_WORLD, &data, &win);
 
-// 2. 同步（确保窗口就绪）
 MPI_Win_fence(0, win);
-
-// 3. 写入远程内存（从 rank 0 写入 rank 1）
-if (rank == 0) {
-    MPI_Put(local_data, count, MPI_INT, 1, 0, count, MPI_INT, win);
+if (rank == 1) {
+    MPI_Get(&recv_data, 1, MPI_INT, 0, 0, 1, MPI_INT, win);
 }
+MPI_Win_fence(0, win);          // 到这里 recv_data 才有定义
+// 下一个纪元里再 Put，并再 fence 一次之后，目标进程才能读窗口
 
-// 4. 再次同步
-MPI_Win_fence(0, win);
-
-// 5. 结束
-MPI_Win_free(&win);
-MPI_Free_mem(local_buffer);
+MPI_Win_free(&win);             // 同时释放 Win_allocate 的内存
 ```
 
 ### RMA vs 双侧通信
@@ -174,10 +168,11 @@ MPI_Free_mem(local_buffer);
 
 本章配套示例在 `03-advanced/` 目录：
 
-- `derived_type.c` - 派生数据类型
-- `cartesian.c` - 笛卡尔拓扑
-- `comm_split.c` - 通信域分裂
-- `rma_putget.c` - RMA Put/Get 操作
+- `derived_type.c` - 结构体派生类型，并核对收到的字段
+- `vector_indexed.c` - 用向量类型取一列，用索引类型取不连续元素
+- `cartesian.c` - 笛卡尔拓扑。`reorder=1` 时使用新通信域里的 rank
+- `comm_split.c` - 通信域分裂，以及 `MPI_Group_incl`
+- `rma_putget.c` - RMA Put/Get。Get 的结果在 fence 之后检查
 
 ```bash
 cd ch03-advanced/03-advanced
@@ -194,4 +189,4 @@ mpirun -np 4 ./derived_type
 
 ## 下一步
 
-学完本章后，进入 [第四章：硬件结合](./ch04-hardware/README.md) 学习 GPU 与 RDMA 支持。
+学完本章后，进入 [第四章：硬件结合](../ch04-hardware/README.md)。向量类型参数和 RMA 纪元见 [基础知识补充](../docs/基础知识补充.md)。

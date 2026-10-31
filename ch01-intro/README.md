@@ -145,7 +145,7 @@ mpirun -np 2 ./hello
 
 - `hello.c` - 第一个 MPI 程序，输出进程信息
 - `timing.c` - 计时与性能测量
-- `error_check.c` - 错误处理
+- `error_handling.c` - 把错误处理器改成返回错误码，并故意触发 `MPI_ERR_RANK` 和 `MPI_ERR_COMM`
 
 ## 常见问题
 
@@ -164,4 +164,4 @@ A: 理论上限是单核的 N 倍（N = 进程数），实际受通信开销、�
 
 ## 下一步
 
-学完本章后，进入 [第二章：核心编程模型](./ch02-core/README.md) 学习 MPI 编程基础。
+学完本章后，进入 [第二章：核心编程模型](../ch02-core/README.md)。计时分辨率、错误码和后面各章的勘误见 [基础知识补充](../docs/基础知识补充.md)。
