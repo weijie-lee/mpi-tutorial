@@ -148,21 +148,12 @@ ibportstate <lid> <port> query
 ### 测试脚本
 
 ```bash
-# 对比测试
-./rdma_tcp_test.sh
+bash rdma_tcp_test.sh
 ```
 
-输出示例：
-```
-=== RDMA Bandwidth ===
-Send Bandwidth: 95.2 GB/s
+上面的脚本调用 `benchmark_compare.py`。没有 GPU 时只记录 `cpu-gloo`，不会打印 RDMA 相对 TCP 的倍数。有 GPU 时第二次运行设置 `NCCL_IB_DISABLE=1`。带宽单位是 GB/s。`p = 2` 时总线带宽系数 `2*(p-1)/p` 等于 1，算法带宽和总线带宽相同。
 
-=== TCP Bandwidth ===
-Send Bandwidth: 3.2 GB/s
-
-=== Speedup ===
-RDMA is 29.8x faster than TCP
-```
+上表是常见网卡的数量级，不是本仓库的测量结果。本机没有 RDMA 设备，实际输出见 [验证结果](../results/VERIFICATION.md)。
 
 ## 性能瓶颈定位
 
@@ -225,15 +216,17 @@ RDMA is 29.8x faster than TCP
 ```bash
 cd ch10-fullstack-observe/10-fullstack-observe
 
-# NCCL 观测
-python observe_nccl.py
-
-# RDMA/TCP 对比
-python benchmark_compare.py
+mpirun -np 2 python3 pytorch_nccl_rdma_demo.py --tensor_mb 4 --iterations 10
+mpirun -np 2 python3 benchmark_compare.py --tensor_mb 4 --iterations 20 \
+    --output ../../../results/cpu_gloo_allreduce.json
+bash rdma_tcp_test.sh
 ```
 
-- `observe_nccl.py` - NCCL 通信观测
-- `benchmark_compare.py` - RDMA vs TCP 对比
+NCCL 环境变量在 `import torch` 之前设置。每次计时前把 tensor 填回已知值，AllReduce 之后检查元素等于 `1+2+...+world_size`。没有 CUDA 时 mode 是 `cpu-gloo`。
+
+- `pytorch_nccl_rdma_demo.py` - 一次可核对的 AllReduce，并说明 NCCL 日志在看什么
+- `benchmark_compare.py` - 延迟、算法带宽、总线带宽，写成 JSON
+- `rdma_tcp_test.sh` - 有 GPU 时再强制走 TCP 跑第二遍
 
 ## 本章测验
 

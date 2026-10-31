@@ -85,23 +85,17 @@ int local_ncols;  // 列数
 
 ### 通信模式
 
-```c
-// 发送上边界到上方进程
-if (myrow > 0) {
-    MPI_Send(local_u[1], ncols, MPI_FLOAT, 
-             myrank - ncols, TAG_UP, MPI_COMM_WORLD);
-    MPI_Recv(local_u[0], ncols, MPI_FLOAT,
-             myrank - ncols, TAG_DOWN, MPI_COMM_WORLD, &status);
-}
+两边都先 `MPI_Send` 再 `MPI_Recv` 时，一行数据一旦超过 eager 缓冲就会死锁。用 `MPI_Sendrecv`，并且上下方向使用不同的 tag：
 
-// 发送下边界到下方进程
-if (myrow < nprocs_row - 1) {
-    MPI_Send(local_u[local_nrows-2], ncols, MPI_FLOAT,
-             myrank + ncols, TAG_DOWN, MPI_COMM_WORLD);
-    MPI_Recv(local_u[local_nrows-1], ncols, MPI_FLOAT,
-             myrank + ncols, TAG_UP, MPI_COMM_WORLD, &status);
+```c
+if (up != MPI_PROC_NULL) {
+    MPI_Sendrecv(u[1], nx, MPI_DOUBLE, up, TAG_UP,
+                 u[0], nx, MPI_DOUBLE, up, TAG_DOWN,
+                 MPI_COMM_WORLD, MPI_STATUS_IGNORE);
 }
 ```
+
+示例按行划分，不是按二维网格划分。源项为 0，右边界为 1，解的是拉普拉斯方程。程序会用同一迭代次数的串行 Jacobi 逐点比较。
 
 ### 迭代循环
 
@@ -178,4 +172,4 @@ mpirun -np 4 ./jacobi2d 100 1000
 
 ## 下一步
 
-学完本章后，进入 [第七章：调试与优化](./ch07-optimize/README.md) 学习环境搭建和性能调优。
+学完本章后，进入 [第七章：调试与优化](../ch07-optimize/README.md)。鬼边界交换的完成条件见 [基础知识补充](../docs/基础知识补充.md)。

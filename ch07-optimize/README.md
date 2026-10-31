@@ -175,14 +175,15 @@ do_computation();
 MPI_Wait(&req, &status);
 ```
 
-#### 3. 集合通信优化
+#### 3. 把多次小消息合成一次
+
+集合通信本身已经由 MPI 实现选算法。把同一次广播写两遍不会更快。该合并的是循环里的多次点对点：
 
 ```c
-// 使用带缓冲的广播（更高效）
-MPI_Bcast(buffer, count, MPI_DATATYPE, root, comm);
-// 等价于
-MPI_Bcast(buffer, count, MPI_DATATYPE, root, comm);
+MPI_Send(data, n, MPI_DOUBLE, dest, tag, comm);
 ```
+
+计时只包住通信调用。用 `int` 累加百万项会溢出，基准程序用 `double`，并和解析值比较。`pingpong.c` 用往返时间的一半估计 `T(n) = α + nβ`。
 
 #### 4. 拓扑感知
 
@@ -258,9 +259,10 @@ mpicc -O3 -o allreduce_bench allreduce_bench.c
 mpirun -np 4 ./allreduce_bench
 ```
 
-- `allreduce_bench.c` - AllReduce 性能基准测试
-- `blocking_vs_nonblocking.c` - 阻塞 vs 非阻塞通信对比
+- `allreduce_bench.c` - 只计时 AllReduce，并核对求和
+- `blocking_vs_nonblocking.c` - 阻塞与可重叠的非阻塞，两边都检查收到的数据
+- `pingpong.c` - 不同消息长度的单向延迟和带宽
 
 ## 下一步
 
-学完本章后，进入 [第八章：RDMA Verbs 编程](./ch08-rdma-verbs/README.md) 学习 RDMA 原生编程。
+学完本章后，进入 [第八章：RDMA Verbs 编程](../ch08-rdma-verbs/README.md)。带宽公式见 [基础知识补充](../docs/基础知识补充.md)。

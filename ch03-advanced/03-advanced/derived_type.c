@@ -27,6 +27,8 @@ int main(int argc, char** argv) {
         return 1;
     }
 
+    int local_fail = 0;
+
     // --------------------------
     // 步骤一：定义 MPI 派生数据类型，对应我们的 Particle 结构体
     // MPI_Type_create_struct 用来创建任意结构体类型
@@ -72,6 +74,16 @@ int main(int argc, char** argv) {
         Particle p;
         MPI_Recv(&p, 1, MPI_Particle, 0, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
         printf("Rank 1: received Particle id=%d, x=%f, y=%f\n", p.id, p.x, p.y);
+        if (p.id != 42 || (p.x - 1.5) * (p.x - 1.5) > 1e-18 || (p.y - 2.7) * (p.y - 2.7) > 1e-18) {
+            fprintf(stderr, "Particle payload mismatch\n");
+            local_fail = 1;
+        }
+    }
+
+    int failed = 0;
+    MPI_Allreduce(&local_fail, &failed, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+    if (rank == 0) {
+        printf("RESULT: %s\n", failed ? "FAIL" : "PASS");
     }
 
     // --------------------------
@@ -79,5 +91,5 @@ int main(int argc, char** argv) {
     MPI_Type_free(&MPI_Particle);
 
     MPI_Finalize();
-    return 0;
+    return failed ? 1 : 0;
 }

@@ -107,10 +107,14 @@ if (rank == 0) {
 // 双方都在等对方接收，死锁！
 ```
 
+小消息的 `MPI_Send` 经常走 eager：数据拷进 MPI 内部缓冲后发送就返回，所以上面这段对一个 `int` 不一定真的卡住。消息大到走 rendezvous，或者改用同步发送 `MPI_Ssend`，发送完成依赖于对方已经开始接收，两边同时先发送才会死锁。
+
 **避免死锁的方法**：
-1. 保持发送/接收顺序一致
-2. 使用 `MPI_Sendrecv`（发送接收组合）
-3. 使用非阻塞通信
+1. 保持发送/接收顺序一致：一边先发后收，另一边先收后发
+2. 使用 `MPI_Sendrecv`
+3. 先 `MPI_Irecv` 再 `MPI_Isend`，最后 `MPI_Wait`
+
+`deadlock.c` 默认核对这三种安全交换。`mpirun -np 2 ./deadlock ssend` 才进入会卡住的同步发送。长度未知的消息先 `MPI_Probe`，再按 `MPI_Get_count` 分配缓冲，见 `sendrecv.c`。
 
 ## 集合通信
 
@@ -232,12 +236,12 @@ mpicc -o sendrecv sendrecv.c
 mpirun -np 2 ./sendrecv
 ```
 
-- `sendrecv.c` - 点对点通信
-- `deadlock.c` - 死锁示例与解决
-- `nonblocking.c` - 非阻塞通信
-- `collectives.c` - 集合通信
-- `all-collectives.c` - 各种集合通信
-- `pi_monte_carlo.c` - Monte Carlo 计算 π
+- `sendrecv.c` - 点对点通信，以及 `MPI_Probe`
+- `deadlock.c` - 三种安全交换；`ssend` 参数演示同步发送死锁
+- `nonblocking.c` - 非阻塞通信，进程两两配对
+- `collectives.c` - 集合通信，缓冲按进程数分配
+- `all-collectives.c` - 集合通信、`MPI_IN_PLACE` 和 `MPI_Iallreduce`
+- `pi_monte_carlo.c` - Monte Carlo 计算 π，并检查误差
 
 ## 性能小贴士
 
@@ -255,4 +259,4 @@ mpirun -np 2 ./sendrecv
 
 ## 下一步
 
-学完本章后，进入 [第三章：进阶核心主题](./ch03-advanced/README.md) 学习派生类型、拓扑和 RMA。
+学完本章后，进入 [第三章：进阶核心主题](../ch03-advanced/README.md)。发送模式和 `MPI_IN_PLACE` 的说明见 [基础知识补充](../docs/基础知识补充.md)。

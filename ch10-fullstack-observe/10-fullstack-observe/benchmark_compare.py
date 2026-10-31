@@ -1,182 +1,172 @@
 #!/usr/bin/env python3
-"""
-RDMA vs TCP 自动化性能对比基准测试
+"""AllReduce 基准。输出 JSON，便于和另一次运行对比。
 
-本脚本运行 AllReduce benchmark 并输出结构化的 JSON 结果，
-方便后续分析和可视化。
+没有 GPU 时使用 gloo，mode 记为 cpu-gloo，不会把这次结果叫作 RDMA。
+有 GPU 且没有设置 NCCL_IB_DISABLE=1 时，mode 记为 nccl-default：NCCL 会自己选择 IB 或 socket。
+本进程看不到网卡完成队列，不能仅凭环境变量断言数据走了 RDMA。
 
-使用方法：
-    # RDMA 模式
-    export NCCL_DEBUG=INFO
-    export NCCL_IB_DISABLE=0
-    mpirun -np 2 python benchmark_compare.py --output rdma_results.json
+    mpirun -np 2 python3 benchmark_compare.py --tensor_mb 4 --iterations 10 --output results.json
 
-    # TCP 模式
-    export NCCL_IB_DISABLE=1
-    export NCCL_NET_GDR_LEVEL=0
-    mpirun -np 2 python benchmark_compare.py --output tcp_results.json
-
-    # 对比结果
-    python -c "
-    import json
-    rdma = json.load(open('rdma_results.json'))
-    tcp = json.load(open('tcp_results.json'))
-    print(f'Latency speedup: {tcp[\"avg_latency_ms\"]/rdma[\"avg_latency_ms\"]:.1f}x')
-    print(f'Bandwidth speedup: {rdma[\"avg_bandwidth_gbps\"]/tcp[\"avg_bandwidth_gbps\"]:.1f}x')
-    "
+带宽单位是 GB/s（十进制 1e9 字节/秒），不是 Gbps。
+算法带宽 = 消息大小 / 单次耗时。
+总线带宽 = 算法带宽 * 2*(p-1)/p。
 """
 
-import os
-import time
+import argparse
 import json
+import os
+import sys
+import time
+
 import torch
 import torch.distributed as dist
-import argparse
 
 
-def detect_transport_mode():
-    """检测当前使用的传输模式"""
-    ib_disable = os.environ.get("NCCL_IB_DISABLE", "0")
-    if ib_disable == "1":
-        return "tcp"
-    return "rdma"
+def bootstrap_env():
+    if "RANK" not in os.environ and "OMPI_COMM_WORLD_RANK" in os.environ:
+        os.environ["RANK"] = os.environ["OMPI_COMM_WORLD_RANK"]
+        os.environ["WORLD_SIZE"] = os.environ["OMPI_COMM_WORLD_SIZE"]
+        os.environ["LOCAL_RANK"] = os.environ.get("OMPI_COMM_WORLD_LOCAL_RANK", "0")
+    os.environ.setdefault("RANK", "0")
+    os.environ.setdefault("WORLD_SIZE", "1")
+    os.environ.setdefault("LOCAL_RANK", "0")
+    os.environ.setdefault("MASTER_ADDR", "127.0.0.1")
+    os.environ.setdefault("MASTER_PORT", "29500")
 
 
-def benchmark(iterations=50, tensor_mb=100, warmup=10):
-    """
-    运行 AllReduce benchmark 并返回详细结果。
+def detect_mode():
+    if not torch.cuda.is_available() or torch.cuda.device_count() == 0:
+        return "cpu-gloo"
+    if os.environ.get("NCCL_IB_DISABLE", "0") == "1":
+        return "nccl-tcp-forced"
+    return "nccl-default"
 
-    Args:
-        iterations: 测试迭代次数
-        tensor_mb: Tensor 大小（MB）
-        warmup: 预热迭代次数
 
-    Returns:
-        dict: 包含延迟、带宽等性能指标
-    """
+def init_distributed():
+    bootstrap_env()
+    local_rank = int(os.environ["LOCAL_RANK"])
+    if torch.cuda.is_available() and torch.cuda.device_count() > 0:
+        index = local_rank % torch.cuda.device_count()
+        torch.cuda.set_device(index)
+        dist.init_process_group(backend="nccl", init_method="env://")
+        return torch.device("cuda", index)
+    dist.init_process_group(backend="gloo", init_method="env://")
+    return torch.device("cpu")
+
+
+def percentile(sorted_values, fraction):
+    index = min(len(sorted_values) - 1, int(len(sorted_values) * fraction))
+    return sorted_values[index]
+
+
+def benchmark(device, iterations, tensor_mb, warmup):
     rank = dist.get_rank()
     world_size = dist.get_world_size()
-    device = torch.device(f"cuda:{rank % torch.cuda.device_count()}")
-
-    tensor_size = int(tensor_mb * 1024 * 1024 / 4)  # float32 = 4 bytes
+    tensor_size = max(1, int(tensor_mb * 1024 * 1024 / 4))
     tensor = torch.ones(tensor_size, dtype=torch.float32, device=device)
 
-    # Warmup
+    check = torch.tensor([float(rank + 1)], dtype=torch.float32, device=device)
+    dist.all_reduce(check, op=dist.ReduceOp.SUM)
+    expected = world_size * (world_size + 1) / 2.0
+    correct = abs(check.item() - expected) < 1e-3
+
     if rank == 0:
         print(f"Warming up ({warmup} iterations)...")
     for _ in range(warmup):
+        tensor.fill_(1.0)
         dist.all_reduce(tensor, op=dist.ReduceOp.SUM)
-    torch.cuda.synchronize()
+    if device.type == "cuda":
+        torch.cuda.synchronize()
     dist.barrier()
 
-    # Benchmark
     if rank == 0:
         print(f"Running benchmark ({iterations} iterations, {tensor_mb} MB)...")
 
     latencies = []
-    for i in range(iterations):
-        # 重置 tensor 避免数值溢出
+    for _ in range(iterations):
         tensor.fill_(1.0)
-        torch.cuda.synchronize()
-
+        if device.type == "cuda":
+            torch.cuda.synchronize()
         start = time.perf_counter()
         dist.all_reduce(tensor, op=dist.ReduceOp.SUM)
-        torch.cuda.synchronize()
-        end = time.perf_counter()
+        if device.type == "cuda":
+            torch.cuda.synchronize()
+        latencies.append((time.perf_counter() - start) * 1000)
 
-        latencies.append((end - start) * 1000)  # ms
+    if abs(tensor[0].item() - float(world_size)) > 1e-3:
+        correct = False
 
-    data_size_gb = tensor.element_size() * tensor.nelement() / (1024**3)
+    data_size_gb = tensor.element_size() * tensor.nelement() / 1e9
     bandwidths = [data_size_gb / (lat / 1000) for lat in latencies]
-
-    # 排序用于百分位数计算
+    bus_factor = 1.0 if world_size == 1 else 2.0 * (world_size - 1) / world_size
     sorted_latencies = sorted(latencies)
+    avg_alg = sum(bandwidths) / len(bandwidths)
 
     return {
-        "mode": detect_transport_mode(),
+        "mode": detect_mode(),
         "world_size": world_size,
         "tensor_mb": tensor_mb,
         "iterations": iterations,
         "warmup": warmup,
-        # 延迟统计 (ms)
+        "correct": correct,
         "avg_latency_ms": round(sum(latencies) / len(latencies), 3),
-        "median_latency_ms": round(sorted_latencies[len(sorted_latencies) // 2], 3),
-        "p95_latency_ms": round(sorted_latencies[int(len(sorted_latencies) * 0.95)], 3),
-        "p99_latency_ms": round(sorted_latencies[int(len(sorted_latencies) * 0.99)], 3),
+        "median_latency_ms": round(percentile(sorted_latencies, 0.5), 3),
+        "p95_latency_ms": round(percentile(sorted_latencies, 0.95), 3),
+        "p99_latency_ms": round(percentile(sorted_latencies, 0.99), 3),
         "min_latency_ms": round(min(latencies), 3),
         "max_latency_ms": round(max(latencies), 3),
         "stddev_latency_ms": round(
             (sum((x - sum(latencies) / len(latencies)) ** 2 for x in latencies) / len(latencies)) ** 0.5,
             3,
         ),
-        # 带宽统计 (GB/s)
-        "avg_bandwidth_gbps": round(sum(bandwidths) / len(bandwidths), 3),
+        "avg_alg_bandwidth_GBps": round(avg_alg, 3),
+        "avg_bus_bandwidth_GBps": round(avg_alg * bus_factor, 3),
+        # 保留旧字段名。单位仍是 GB/s，不是 gigabit/s。
+        "avg_bandwidth_gbps": round(avg_alg, 3),
         "max_bandwidth_gbps": round(max(bandwidths), 3),
-        # 原始数据
         "latencies": [round(x, 3) for x in latencies],
         "bandwidths": [round(x, 3) for x in bandwidths],
     }
 
 
 def print_results(results):
-    """格式化打印结果"""
     print("\n" + "=" * 60)
-    print(f"  Benchmark Results: {results['mode'].upper()} Mode")
+    print(f"  Benchmark Results: {results['mode']}")
     print("=" * 60)
     print(f"  World Size:         {results['world_size']} processes")
     print(f"  Tensor Size:        {results['tensor_mb']} MB")
-    print(f"  Iterations:         {results['iterations']}")
-    print(f"  Warmup:             {results['warmup']}")
-    print("-" * 60)
+    print(f"  Correctness:        {results['correct']}")
     print(f"  Avg Latency:        {results['avg_latency_ms']:.3f} ms")
-    print(f"  Median Latency:     {results['median_latency_ms']:.3f} ms")
     print(f"  P95 Latency:        {results['p95_latency_ms']:.3f} ms")
-    print(f"  P99 Latency:        {results['p99_latency_ms']:.3f} ms")
-    print(f"  Min Latency:        {results['min_latency_ms']:.3f} ms")
-    print(f"  Max Latency:        {results['max_latency_ms']:.3f} ms")
-    print(f"  Stddev:             {results['stddev_latency_ms']:.3f} ms")
-    print("-" * 60)
-    print(f"  Avg Bandwidth:      {results['avg_bandwidth_gbps']:.3f} GB/s")
-    print(f"  Max Bandwidth:      {results['max_bandwidth_gbps']:.3f} GB/s")
+    print(f"  Alg Bandwidth:      {results['avg_alg_bandwidth_GBps']:.3f} GB/s")
+    print(f"  Bus Bandwidth:      {results['avg_bus_bandwidth_GBps']:.3f} GB/s")
     print("=" * 60 + "\n")
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="RDMA vs TCP AllReduce Benchmark"
-    )
-    parser.add_argument(
-        "--iterations", type=int, default=50, help="Number of benchmark iterations"
-    )
-    parser.add_argument(
-        "--tensor_mb", type=int, default=100, help="Tensor size in MB"
-    )
-    parser.add_argument(
-        "--warmup", type=int, default=10, help="Number of warmup iterations"
-    )
-    parser.add_argument(
-        "--output", type=str, default="benchmark_results.json", help="Output JSON file"
-    )
+    parser = argparse.ArgumentParser(description="AllReduce benchmark")
+    parser.add_argument("--iterations", type=int, default=20)
+    parser.add_argument("--tensor_mb", type=int, default=8)
+    parser.add_argument("--warmup", type=int, default=3)
+    parser.add_argument("--output", type=str, default="benchmark_results.json")
     args = parser.parse_args()
 
-    # 初始化
-    dist.init_process_group(backend="nccl", init_method="env://")
+    device = init_distributed()
     rank = dist.get_rank()
-
-    results = benchmark(
-        iterations=args.iterations,
-        tensor_mb=args.tensor_mb,
-        warmup=args.warmup,
-    )
+    results = benchmark(device, args.iterations, args.tensor_mb, args.warmup)
+    ok = torch.tensor([1 if results["correct"] else 0], dtype=torch.int32, device=device)
+    dist.all_reduce(ok, op=dist.ReduceOp.MIN)
+    results["correct"] = bool(ok.item())
 
     if rank == 0:
         print_results(results)
-        with open(args.output, "w") as f:
-            json.dump(results, f, indent=2)
+        with open(args.output, "w", encoding="utf-8") as handle:
+            json.dump(results, handle, indent=2)
         print(f"Results saved to {args.output}")
-
+        print("RESULT: PASS" if results["correct"] else "RESULT: FAIL")
     dist.destroy_process_group()
+    return 0 if ok.item() == 1 else 1
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

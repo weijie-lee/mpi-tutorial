@@ -19,64 +19,55 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    // --------------------------
-    // 单侧通信第一步：每个进程暴露自己一块内存给对方访问
-    // 这个叫做 创建窗口（Window）
-    int data;
-    MPI_Win win; // 窗口句柄
-
+    // 窗口内存由 MPI_Win_allocate 分配。MPI 可以选择它能够注册给网卡的地址。
+    // 把栈上的 int 交给 MPI_Win_create 时，部分 OpenMPI 的 osc 组件会直接返回 MPI_ERR_WIN。
+    // Win_free 会一并释放这块内存，不要再对它调用 free。
+    MPI_Win win;
+    int *data = NULL;
+    MPI_Win_allocate(sizeof(int), sizeof(int), MPI_INFO_NULL, MPI_COMM_WORLD, &data, &win);
     if (rank == 0) {
-        data = 1234; // rank 0 初始化数据
+        *data = 1234;
     } else {
-        data = 0;
+        *data = 0;
     }
 
-    // --------------------------
-    // 创建窗口：暴露本地 data 给远程访问
-    // MPI_Win_create(
-    //     &data,      // 暴露的内存起始地址
-    //     sizeof(int), // 暴露的内存大小（字节）
-    //     sizeof(int), // 单位大小
-    //     MPI_INFO_NULL, // 信息，默认用 NULL
-    //     MPI_COMM_WORLD, // 通信域
-    //     &win // 输出窗口句柄
-    // );
-    MPI_Win_create(&data, sizeof(int), sizeof(int), MPI_INFO_NULL, MPI_COMM_WORLD, &win);
-
-    // --------------------------
-    //  fence 同步：所有进程进入 RMA 访问阶段
-    // 所有进程必须调用 MPI_Win_fence 才能开始访问
+    // fence 划定一个 RMA 访问纪元。纪元里发起的 Get/Put 要到下一次 fence 之后才完成。
+    // 在此之前读 Get 的本地缓冲是未定义的，所以检查必须放在 fence 之后。
+    int recv_data = -1;
+    MPI_Win_fence(0, win);
+    if (rank == 1) {
+        // target_disp 的单位是创建窗口时的 disp_unit（这里是 sizeof(int)），不是字节。
+        MPI_Get(&recv_data, 1, MPI_INT, 0, 0, 1, MPI_INT, win);
+    }
     MPI_Win_fence(0, win);
 
-    // --------------------------
-    // rank 1 从 rank 0 读数据
-    // MPI_Get：把远程 window 的数据读到本地
+    int local_fail = 0;
     if (rank == 1) {
-        int recv_data;
-        // MPI_Get(
-        //     &recv_data, // 本地接收缓冲区
-        //     1, MPI_INT, // 接收 1 个 int
-        //     0, // 目标进程 rank（我们读 rank 0 的数据）
-        //     0, // 目标偏移（字节），从窗口起始第 0 字节开始读
-        //     1, MPI_INT, // 读 1 个 int
-        //     win, // 窗口
-        // );
-        MPI_Get(&recv_data, 1, MPI_INT, 0, 0, 1, MPI_INT, win);
         printf("Rank 1: got data %d from rank 0\n", recv_data);
+        if (recv_data != 1234) {
+            local_fail = 1;
+        }
+    }
 
-        // 我们再改一下 rank 0 的数据，用 MPI_Put 写过去
+    MPI_Win_fence(0, win);
+    if (rank == 1) {
         int new_data = 5678;
         MPI_Put(&new_data, 1, MPI_INT, 0, 0, 1, MPI_INT, win);
         printf("Rank 1: put new data %d to rank 0\n", new_data);
     }
-
-    // --------------------------
-    //  fence 同步：所有 RMA 访问完成
     MPI_Win_fence(0, win);
 
-    // rank 0 看看数据是不是被改了
     if (rank == 0) {
-        printf("Rank 0: data after put from rank 1 is now: %d\n", data);
+        printf("Rank 0: data after put from rank 1 is now: %d\n", *data);
+        if (*data != 5678) {
+            local_fail = 1;
+        }
+    }
+
+    int failed = 0;
+    MPI_Allreduce(&local_fail, &failed, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+    if (rank == 0) {
+        printf("RESULT: %s\n", failed ? "FAIL" : "PASS");
     }
 
     // --------------------------
@@ -84,7 +75,7 @@ int main(int argc, char** argv) {
     MPI_Win_free(&win);
 
     MPI_Finalize();
-    return 0;
+    return failed ? 1 : 0;
 }
 
 /*

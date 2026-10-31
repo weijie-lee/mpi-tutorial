@@ -1,0 +1,30 @@
+# 没有 GPU 的集群或本地 kind：train.py 会选择 gloo。
+# 设备插件提供的 RDMA 资源名要看集群，常见写法是 rdma/rdma_shared_device_a: 1。
+# "rdma/ib mlx5: 1" 不是合法的资源名。
+apiVersion: kubeflow.org/v1
+kind: PyTorchJob
+metadata:
+  name: pytorch-distributed-cpu
+  namespace: kubeflow
+spec:
+  pytorchReplicaSpecs:
+    Master:
+      replicas: 1
+      restartPolicy: OnFailure
+      template:
+        spec:
+          containers:
+            - name: pytorch
+              image: mpi-tutorial-pytorch:latest
+              imagePullPolicy: IfNotPresent
+              command: ["python", "/workspace/train.py"]
+    Worker:
+      replicas: 1
+      restartPolicy: OnFailure
+      template:
+        spec:
+          containers:
+            - name: pytorch
+              image: mpi-tutorial-pytorch:latest
+              imagePullPolicy: IfNotPresent
+              command: ["python", "/workspace/train.py"]

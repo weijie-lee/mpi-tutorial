@@ -17,8 +17,16 @@ int main(int argc, char** argv) {
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &size);
 
-    // 2. 每个进程绑定到对应GPU（假设每个进程一个GPU）
-    cudaError_t err = cudaSetDevice(rank);
+    // 2. 每个进程绑定到本机的一张 GPU。全局 rank 可能大于本机卡数。
+    int n_devices = 0;
+    cudaError_t err = cudaGetDeviceCount(&n_devices);
+    if (err != cudaSuccess || n_devices <= 0) {
+        fprintf(stderr, "rank %d: no CUDA device (%s)\n", rank,
+                err == cudaSuccess ? "device count is 0" : cudaGetErrorString(err));
+        MPI_Finalize();
+        return 1;
+    }
+    err = cudaSetDevice(rank % n_devices);
     if (err != cudaSuccess) {
         fprintf(stderr, "rank %d: cudaSetDevice failed: %s\n",
                 rank, cudaGetErrorString(err));

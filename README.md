@@ -38,15 +38,20 @@ mpi-tutorial/
 │   ├── README.md
 │   └── 06-applications/
 ├── ch07-optimize/                 # 环境与调试优化
-│   └── README.md
+│   ├── README.md
+│   └── 07-debug/
 ├── ch08-rdma-verbs/               # RDMA Verbs 编程
 │   ├── README.md
 │   └── 08-rdma-verbs/
 ├── ch09-kubernetes-pytorchjob/    # Kubernetes 部署
-│   └── README.md
-└── ch10-fullstack-observe/        # 全链路观测实战
-    ├── README.md
-    └── 10-fullstack-observe/
+│   ├── README.md
+│   └── 09-pytorchjob/
+├── ch10-fullstack-observe/        # 全链路观测实战
+│   ├── README.md
+│   └── 10-fullstack-observe/
+├── docs/基础知识补充.md            # 勘误、缺失知识、实验怎么核对
+├── scripts/verify.sh              # 编译并运行 CPU 可验证的实验
+└── results/VERIFICATION.md        # 最近一次验证的原始输出
 ```
 
 ## 学习路径
@@ -66,16 +71,21 @@ mpi-tutorial/
 
 ## 快速开始
 
-### 编译示例
+不依赖 GPU 和 RDMA 网卡的实验可以一次跑完。每个程序打印 `RESULT: PASS`，汇总写在 `results/VERIFICATION.md`。
+
 ```bash
-cd ch02-core/02-core
-make
+bash scripts/verify.sh
 ```
 
-### 运行示例
+单独跑第一章：
+
 ```bash
-mpirun -np 4 ./hello_mpi
+cd ch01-intro/01-basics
+mpicc -O2 -o hello hello.c
+mpirun -np 4 ./hello
 ```
+
+知识点里原先缺的部分和写错的 API 说明在 [docs/基础知识补充.md](docs/基础知识补充.md)。
 
 ## 环境要求
 

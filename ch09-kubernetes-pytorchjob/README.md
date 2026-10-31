@@ -195,16 +195,12 @@ kubectl logs pytorch-distributed-job-worker-0 -c pytorch
 
 在 K8s 中启用 RDMA：
 
+资源名由设备插件决定，不能写成带空格的 `rdma/ib mlx5`。下面只是常见名字，要以集群里 `kubectl describe node` 的 `Capacity` 为准：
+
 ```yaml
-apiVersion: v1
-kind: Pod
-spec:
-  containers:
-  - name: rdma-container
-    image: rdma-image
-    resources:
-      limits:
-        rdma/ib mlx5: 1  # 请求 RDMA 设备
+resources:
+  limits:
+    rdma/rdma_shared_device_a: "1"
 ```
 
 ## 本章测验
@@ -223,15 +219,23 @@ cd ch09-kubernetes-pytorchjob/09-pytorchjob
 ```
 
 文件说明：
-- `pytorchjob.yaml` - PyTorchJob 配置文件
-- `train.py` - 分布式训练脚本
-- `Dockerfile` - 训练镜像
+- `pytorchjob.yaml` - 每副本 1 张 GPU 的 PyTorchJob
+- `pytorchjob-cpu.yaml` - 没有 GPU 时的同一份训练脚本
+- `train.py` - 分布式训练脚本，按 `LOCAL_RANK` 选设备
+- `Dockerfile` - 训练镜像，安装 `openmpi-bin`
+
+提交到集群之前，可以先在本机确认脚本。没有 GPU 时它使用 gloo。每个 Pod 只有一张 GPU 时，设备号是 `LOCAL_RANK`，不是全局 `RANK`。Operator 会注入进程组环境变量，清单里不要再写死 `WORLD_SIZE`。
+
+```bash
+mpirun -np 2 python3 train.py
+```
 
 ### 使用方法
 
-1. **构建镜像**
+1. **构建镜像**。基础镜像里的安装包名是 `openmpi-bin`，不是 `openmpi`。PyTorchJob 不会在容器里再套 `mpirun`。
+
 ```bash
-docker build -t my-pytorch-job:latest .
+docker build -t mpi-tutorial-pytorch:latest .
 ```
 
 2. **提交任务**
@@ -251,4 +255,4 @@ kubectl logs pytorch-distributed-job-master-0 -c pytorch
 
 ## 下一步
 
-学完本章后，进入 [第十章：全链路观测](./ch10-fullstack-observe/README.md) 学习端到端性能观测。
+学完本章后，进入 [第十章：全链路观测](../ch10-fullstack-observe/README.md)。Pod 内的 rank 和设备号见 [基础知识补充](../docs/基础知识补充.md)。

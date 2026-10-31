@@ -1,0 +1,330 @@
+#ifndef RDMA_COMMON_H
+#define RDMA_COMMON_H
+
+#define _POSIX_C_SOURCE 200809L
+#define _DEFAULT_SOURCE
+
+// 用 TCP 交换 QP 号、LID、rkey 和地址，再用 ibverbs 把 QP 推到 RTS。
+// 不要把 ibv_create_qp 创建出来的 QP 直接塞进 rdma_cm_id：连接管理器要自己建 QP，
+// 并且必须走 ADDR_RESOLVED -> ROUTE_RESOLVED -> rdma_connect 这条事件链。
+
+#include <arpa/inet.h>
+#include <errno.h>
+#include <infiniband/verbs.h>
+#include <netinet/in.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/socket.h>
+#include <time.h>
+#include <unistd.h>
+
+#define RDMA_BUF_SIZE 1024
+#define RDMA_TIMEOUT_MS 10000
+
+struct rdma_peer {
+    uint32_t qpn;
+    uint16_t lid;
+    uint32_t psn;
+    uint32_t rkey;
+    uint64_t addr;
+    int gid_index;
+    union ibv_gid gid;
+};
+
+struct rdma_res {
+    struct ibv_context *ctx;
+    struct ibv_pd *pd;
+    struct ibv_cq *cq;
+    struct ibv_qp *qp;
+    struct ibv_mr *mr;
+    char *buf;
+    int port;
+    uint16_t lid;
+    int gid_index;
+    union ibv_gid gid;
+};
+
+static int rdma_read_line(int fd, char *buf, int cap) {
+    int n = 0;
+    while (n < cap - 1) {
+        char c;
+        ssize_t r = recv(fd, &c, 1, 0);
+        if (r < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            return -1;
+        }
+        if (r == 0) {
+            break;
+        }
+        if (c == '\n') {
+            break;
+        }
+        buf[n++] = c;
+    }
+    buf[n] = '\0';
+    return n;
+}
+
+static int rdma_write_all(int fd, const char *text) {
+    size_t len = strlen(text);
+    size_t off = 0;
+    while (off < len) {
+        ssize_t w = send(fd, text + off, len - off, 0);
+        if (w < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            return -1;
+        }
+        off += (size_t)w;
+    }
+    return 0;
+}
+
+static int rdma_find_port(struct ibv_context *ctx, struct rdma_res *res) {
+    struct ibv_device_attr dev_attr;
+    if (ibv_query_device(ctx, &dev_attr)) {
+        return -1;
+    }
+    for (int port = 1; port <= dev_attr.phys_port_cnt; port++) {
+        struct ibv_port_attr attr;
+        if (ibv_query_port(ctx, port, &attr)) {
+            continue;
+        }
+        if (attr.state != IBV_PORT_ACTIVE) {
+            continue;
+        }
+        res->port = port;
+        res->lid = attr.lid;
+        res->gid_index = -1;
+        memset(&res->gid, 0, sizeof(res->gid));
+        for (int i = 0; i < attr.gid_tbl_len; i++) {
+            union ibv_gid gid;
+            if (ibv_query_gid(ctx, port, i, &gid)) {
+                continue;
+            }
+            int nonzero = 0;
+            for (int b = 0; b < 16; b++) {
+                if (gid.raw[b]) {
+                    nonzero = 1;
+                    break;
+                }
+            }
+            if (nonzero) {
+                res->gid = gid;
+                res->gid_index = i;
+                break;
+            }
+        }
+        if (res->lid == 0 && res->gid_index < 0) {
+            continue;
+        }
+        return 0;
+    }
+    return -1;
+}
+
+static int rdma_open(struct rdma_res *res) {
+    memset(res, 0, sizeof(*res));
+    int num = 0;
+    struct ibv_device **list = ibv_get_device_list(&num);
+    if (!list || num <= 0) {
+        if (list) {
+            ibv_free_device_list(list);
+        }
+        return -1;
+    }
+    int opened = -1;
+    for (int i = 0; i < num; i++) {
+        struct ibv_context *ctx = ibv_open_device(list[i]);
+        if (!ctx) {
+            continue;
+        }
+        res->ctx = ctx;
+        if (rdma_find_port(ctx, res) == 0) {
+            printf("Using device %s port %d lid %u gid_index %d\n",
+                   ibv_get_device_name(list[i]), res->port, res->lid, res->gid_index);
+            opened = 0;
+            break;
+        }
+        ibv_close_device(ctx);
+        res->ctx = NULL;
+    }
+    ibv_free_device_list(list);
+    return opened;
+}
+
+static int rdma_create_qp(struct rdma_res *res) {
+    res->pd = ibv_alloc_pd(res->ctx);
+    if (!res->pd) {
+        return -1;
+    }
+    res->buf = (char *)calloc(1, RDMA_BUF_SIZE);
+    if (!res->buf) {
+        return -1;
+    }
+    res->mr = ibv_reg_mr(res->pd, res->buf, RDMA_BUF_SIZE,
+                         IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_READ |
+                             IBV_ACCESS_REMOTE_WRITE);
+    if (!res->mr) {
+        return -1;
+    }
+    res->cq = ibv_create_cq(res->ctx, 16, NULL, NULL, 0);
+    if (!res->cq) {
+        return -1;
+    }
+    struct ibv_qp_init_attr attr;
+    memset(&attr, 0, sizeof(attr));
+    attr.send_cq = res->cq;
+    attr.recv_cq = res->cq;
+    attr.qp_type = IBV_QPT_RC;
+    attr.cap.max_send_wr = 16;
+    attr.cap.max_recv_wr = 16;
+    attr.cap.max_send_sge = 1;
+    attr.cap.max_recv_sge = 1;
+    res->qp = ibv_create_qp(res->pd, &attr);
+    return res->qp ? 0 : -1;
+}
+
+static void rdma_format_peer(const struct rdma_res *res, uint32_t psn, char *out, size_t cap) {
+    char gidhex[33];
+    for (int i = 0; i < 16; i++) {
+        sprintf(gidhex + 2 * i, "%02x", res->gid.raw[i]);
+    }
+    snprintf(out, cap, "%u %u %u %u %llu %d %s\n",
+             res->qp->qp_num, res->lid, psn, res->mr->rkey,
+             (unsigned long long)(uintptr_t)res->buf, res->gid_index, gidhex);
+}
+
+static int rdma_parse_peer(const char *line, struct rdma_peer *peer) {
+    unsigned qpn = 0, lid = 0, psn = 0, rkey = 0;
+    unsigned long long addr = 0;
+    int gid_index = -1;
+    char gidhex[33] = {0};
+    int n = sscanf(line, "%u %u %u %u %llu %d %32s",
+                   &qpn, &lid, &psn, &rkey, &addr, &gid_index, gidhex);
+    if (n != 7 || strlen(gidhex) != 32) {
+        return -1;
+    }
+    peer->qpn = qpn;
+    peer->lid = (uint16_t)lid;
+    peer->psn = psn;
+    peer->rkey = rkey;
+    peer->addr = addr;
+    peer->gid_index = gid_index;
+    for (int i = 0; i < 16; i++) {
+        unsigned byte = 0;
+        if (sscanf(gidhex + 2 * i, "%2x", &byte) != 1) {
+            return -1;
+        }
+        peer->gid.raw[i] = (uint8_t)byte;
+    }
+    return 0;
+}
+
+static int rdma_qp_to_rts(struct rdma_res *local, const struct rdma_peer *remote) {
+    struct ibv_qp_attr attr;
+    memset(&attr, 0, sizeof(attr));
+    attr.qp_state = IBV_QPS_INIT;
+    attr.pkey_index = 0;
+    attr.port_num = local->port;
+    attr.qp_access_flags = IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_READ |
+                           IBV_ACCESS_REMOTE_WRITE;
+    int rc = ibv_modify_qp(local->qp, &attr,
+                           IBV_QP_STATE | IBV_QP_PKEY_INDEX | IBV_QP_PORT |
+                               IBV_QP_ACCESS_FLAGS);
+    if (rc) {
+        fprintf(stderr, "INIT failed: %s\n", strerror(rc));
+        return -1;
+    }
+
+    memset(&attr, 0, sizeof(attr));
+    attr.qp_state = IBV_QPS_RTR;
+    attr.path_mtu = IBV_MTU_1024;
+    attr.dest_qp_num = remote->qpn;
+    attr.rq_psn = remote->psn;
+    attr.max_dest_rd_atomic = 1;
+    attr.min_rnr_timer = 12;
+    attr.ah_attr.port_num = local->port;
+    attr.ah_attr.sl = 0;
+    attr.ah_attr.src_path_bits = 0;
+    if (remote->lid) {
+        attr.ah_attr.dlid = remote->lid;
+        attr.ah_attr.is_global = 0;
+    } else {
+        attr.ah_attr.dlid = 0;
+        attr.ah_attr.is_global = 1;
+        attr.ah_attr.grh.dgid = remote->gid;
+        attr.ah_attr.grh.sgid_index = local->gid_index;
+        attr.ah_attr.grh.hop_limit = 1;
+    }
+    rc = ibv_modify_qp(local->qp, &attr,
+                       IBV_QP_STATE | IBV_QP_AV | IBV_QP_PATH_MTU | IBV_QP_DEST_QPN |
+                           IBV_QP_RQ_PSN | IBV_QP_MAX_DEST_RD_ATOMIC | IBV_QP_MIN_RNR_TIMER);
+    if (rc) {
+        fprintf(stderr, "RTR failed: %s\n", strerror(rc));
+        return -1;
+    }
+
+    memset(&attr, 0, sizeof(attr));
+    attr.qp_state = IBV_QPS_RTS;
+    attr.sq_psn = 0;
+    attr.timeout = 14;
+    attr.retry_cnt = 7;
+    attr.rnr_retry = 7;
+    attr.max_rd_atomic = 1;
+    rc = ibv_modify_qp(local->qp, &attr,
+                       IBV_QP_STATE | IBV_QP_TIMEOUT | IBV_QP_RETRY_CNT |
+                           IBV_QP_RNR_RETRY | IBV_QP_SQ_PSN | IBV_QP_MAX_QP_RD_ATOMIC);
+    if (rc) {
+        fprintf(stderr, "RTS failed: %s\n", strerror(rc));
+        return -1;
+    }
+    return 0;
+}
+
+static int __attribute__((unused)) rdma_poll(struct ibv_cq *cq, struct ibv_wc *wc, int timeout_ms) {
+    struct timespec start, now;
+    clock_gettime(CLOCK_MONOTONIC, &start);
+    for (;;) {
+        int ne = ibv_poll_cq(cq, 1, wc);
+        if (ne < 0) {
+            return -1;
+        }
+        if (ne > 0) {
+            return 1;
+        }
+        clock_gettime(CLOCK_MONOTONIC, &now);
+        long ms = (now.tv_sec - start.tv_sec) * 1000L +
+                  (now.tv_nsec - start.tv_nsec) / 1000000L;
+        if (ms > timeout_ms) {
+            return 0;
+        }
+        usleep(1000);
+    }
+}
+
+static void rdma_close(struct rdma_res *res) {
+    if (res->qp) {
+        ibv_destroy_qp(res->qp);
+    }
+    if (res->cq) {
+        ibv_destroy_cq(res->cq);
+    }
+    if (res->mr) {
+        ibv_dereg_mr(res->mr);
+    }
+    if (res->pd) {
+        ibv_dealloc_pd(res->pd);
+    }
+    if (res->ctx) {
+        ibv_close_device(res->ctx);
+    }
+    free(res->buf);
+}
+
+#endif

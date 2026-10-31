@@ -27,8 +27,14 @@ int main(int argc, char** argv) {
     // --------------------------
     // 每个进程绑定到对应 GPU（假设每个进程一个 GPU）
     // 多进程多GPU，一个进程对应一张卡，这是标准做法
-    int n_devices;
-    cudaGetDeviceCount(&n_devices);
+    int n_devices = 0;
+    cudaError_t cerr = cudaGetDeviceCount(&n_devices);
+    if (cerr != cudaSuccess || n_devices <= 0) {
+        fprintf(stderr, "Rank %d: no CUDA device (%s)\n", rank,
+                cerr == cudaSuccess ? "device count is 0" : cudaGetErrorString(cerr));
+        MPI_Finalize();
+        return 1;
+    }
     int device_id = rank % n_devices;
     cudaSetDevice(device_id);
     printf("Rank %d: using GPU %d\n", rank, device_id);

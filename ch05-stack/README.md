@@ -182,19 +182,21 @@ Layer 0-1: GPU 0 → GPU 1: Layer 2-3 → GPU 2: Layer 4-5 → 输出
 ```bash
 cd ch05-stack/05-pytorch
 
-# NCCL 基本示例
-python nccl_allreduce.py
+# pip 版 PyTorch 通常没有 MPI 后端。脚本使用 env://。
+# 没有 GPU 时用 gloo，有 GPU 时用 nccl。
+mpirun -np 2 python3 mpi_basic.py
+mpirun -np 2 python3 pytorch_ddp_mpi.py
 
-# MPI 初始化
-python mpi_basic.py
-
-# DDP 示例
-python pytorch_ddp_mpi.py
+# NCCL C 接口需要 CUDA 和 libnccl
+nvcc -O2 -lnccl -lmpi nccl_allreduce.cu -o nccl_allreduce
+mpirun -np 2 ./nccl_allreduce
 ```
 
-- `mpi_basic.py` - MPI 初始化示例
-- `nccl_allreduce.cu` - NCCL AllReduce
-- `pytorch_ddp_mpi.py` - DDP 训练示例
+`mpirun` 不会设置 `RANK` / `WORLD_SIZE`。示例从 `OMPI_COMM_WORLD_RANK` 补上这些变量，再用 `init_method="env://"`。`backend='nccl'` 不会自动变成 MPI 后端。
+
+- `mpi_basic.py` - AllReduce，并核对 rank 之和
+- `nccl_allreduce.cu` - NCCL AllReduce，按本机 GPU 数量绑定设备
+- `pytorch_ddp_mpi.py` - DDP。CPU 上用 gloo，并检查权重一致
 
 ## 本章测验
 
@@ -205,4 +207,4 @@ python pytorch_ddp_mpi.py
 
 ## 下一步
 
-学完本章后，进入 [第六章：完整应用](./ch06-applications/README.md) 学习二维 Jacobi 迭代实战。
+学完本章后，进入 [第六章：完整应用](../ch06-applications/README.md)。启动方式和后端选择见 [基础知识补充](../docs/基础知识补充.md)。
