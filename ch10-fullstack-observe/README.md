@@ -29,6 +29,8 @@
 └────────────────────────────────────────────────────────┘
 ```
 
+NCCL 进程之间的梯度不经过 MPI。同一节点走 NVLink 或 PCIe，跨节点走 NCCL 自己的 socket 或 InfiniBand/RoCE。图里的 OpenMPI 只出现在用 `mpirun` 启动进程，或者程序调用了 CUDA-aware MPI 的时候。专家并行的不等长交换在 [第十一章](../ch11-comm-libs/README.md)。
+
 ### 训练迭代过程
 
 ```
@@ -235,9 +237,13 @@ NCCL 环境变量在 `import torch` 之前设置。每次计时前把 tensor 填
 - [ ] 能对比 RDMA 和 TCP 性能
 - [ ] 学会定位性能瓶颈
 
+## 下一步
+
+[第十一章：通信库、NCCL、DeepEP 与 MoE](../ch11-comm-libs/README.md) 核对 dispatch/combine，并说明 NCCL 的等长 AlltoAll 覆盖不了专家并行。
+
 ## 总结
 
-恭喜完成 MPI 完整教程！🎉
+到这里，前面十章的 MPI、RDMA 和观测路径可以串起来。通信库和 MoE 见第十一章。
 
 你已掌握：
 - ✅ MPI 基础概念和编程

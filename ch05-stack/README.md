@@ -146,6 +146,8 @@ mpirun -np 4 \
 └─────────────────────────────────────────┘
 ```
 
+这张图描述的是“用 MPI 拉起进程，NCCL 做 AllReduce”这一种部署。NCCL 自己走 NVLink、PCIe，跨机走 socket 或 InfiniBand/RoCE，梯度不经过 MPI。MoE 的 token 交换也不是 AllReduce。通信库的分工、`ncclAlltoAll` 的等长限制，以及 DeepEP 的 dispatch/combine 在 [第十一章](../ch11-comm-libs/README.md)。
+
 ## 分布式训练模式
 
 ### 数据并行 (Data Parallel)
@@ -207,4 +209,4 @@ mpirun -np 2 ./nccl_allreduce
 
 ## 下一步
 
-学完本章后，进入 [第六章：完整应用](../ch06-applications/README.md)。启动方式和后端选择见 [基础知识补充](../docs/基础知识补充.md)。
+学完本章后，进入 [第六章：完整应用](../ch06-applications/README.md)。NCCL 与 MoE 的通信在 [第十一章](../ch11-comm-libs/README.md)。启动方式和后端选择见 [基础知识补充](../docs/基础知识补充.md)。

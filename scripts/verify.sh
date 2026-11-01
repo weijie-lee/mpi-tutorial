@@ -116,10 +116,23 @@ compile_gcc() {
     echo "- C 编译器：$(gcc --version | head -1)"
     echo "- MPI：$(mpirun --version | head -1)"
     python3 - << 'PY'
+import importlib.util
 import torch
-print(f"- PyTorch：{torch.__version__}，MPI 后端 {torch.distributed.is_mpi_available()}，CUDA {torch.cuda.is_available()}")
+import torch.distributed as dist
+cuda = torch.cuda.is_available()
+print(
+    f"- PyTorch：{torch.__version__}，MPI 后端 {dist.is_mpi_available()}，"
+    f"Gloo {dist.is_gloo_available()}，NCCL {dist.is_nccl_available()}，CUDA {cuda}"
+)
+if cuda:
+    print(f"- GPU：{torch.cuda.device_count()} 张 CUDA 设备。NCCL 探针会尝试初始化。")
+else:
+    print("- GPU：没有 CUDA 设备。NCCL 探针应为 SKIP。")
+if importlib.util.find_spec("deep_ep") is None:
+    print("- DeepEP：未安装 deep_ep。探针应为 SKIP。MoE 的 dispatch/combine 在 CPU 上核对。")
+else:
+    print("- DeepEP：已安装 deep_ep。没有可用 GPU 时探针不创建 EPBuffer。")
 PY
-    echo "- GPU：无可用 CUDA 设备，NCCL 示例未运行。"
     echo "- RDMA：本机没有 active 的 verbs 设备，内核也不能创建 soft-RoCE。相关程序应打印 SKIP。"
     echo "- Kubernetes：只检查了清单能被解析，没有提交到集群，也没有构建训练镜像。"
     echo
@@ -147,6 +160,7 @@ compile_c jacobi2d ch06-applications/06-applications/jacobi2d.c -lm || true
 compile_c allreduce_bench ch07-optimize/07-debug/allreduce_bench.c || true
 compile_c blocking_vs_nonblocking ch07-optimize/07-debug/blocking_vs_nonblocking.c -lm || true
 compile_c pingpong ch07-optimize/07-debug/pingpong.c || true
+compile_c moe_alltoall ch11-comm-libs/11-comm-libs/moe_alltoall.c || true
 compile_gcc rdma_write_server ch04-hardware/04-hardware/rdma_write_server.c -libverbs || true
 compile_gcc rdma_write_client ch04-hardware/04-hardware/rdma_write_client.c -libverbs || true
 compile_gcc verbs_server ch08-rdma-verbs/08-rdma-verbs/server.c -libverbs || true
@@ -171,6 +185,10 @@ run_logged "jacobi2d np=3 N=32" "${MPIRUN[@]}" -np 3 "$BUILD/jacobi2d" 32 200
 run_logged "allreduce_bench np=4" "${MPIRUN[@]}" -np 4 "$BUILD/allreduce_bench"
 run_logged "blocking_vs_nonblocking np=2" "${MPIRUN[@]}" -np 2 "$BUILD/blocking_vs_nonblocking"
 run_logged "pingpong np=2" "${MPIRUN[@]}" -np 2 "$BUILD/pingpong"
+run_logged "moe_alltoall np=1" "${MPIRUN[@]}" -np 1 "$BUILD/moe_alltoall"
+run_logged "moe_alltoall np=3" "${MPIRUN[@]}" -np 3 "$BUILD/moe_alltoall"
+run_logged "moe_alltoall np=4" "${MPIRUN[@]}" -np 4 "$BUILD/moe_alltoall"
+run_logged "deepep_layout" python3 ch11-comm-libs/11-comm-libs/deepep_layout.py
 
 rdma_pair() {
     local name="$1"
@@ -238,6 +256,15 @@ run_logged "benchmark_compare np=2" "${MPIRUN[@]}" -np 2 python3 ch10-fullstack-
 export MASTER_PORT=29536
 run_logged "nccl_rdma_demo np=2" "${MPIRUN[@]}" -np 2 python3 ch10-fullstack-observe/10-fullstack-observe/pytorch_nccl_rdma_demo.py \
     --tensor_mb 1 --iterations 4
+export MASTER_PORT=29541
+run_logged "moe_dispatch np=1" "${MPIRUN[@]}" -np 1 python3 ch11-comm-libs/11-comm-libs/moe_dispatch.py
+export MASTER_PORT=29542
+run_logged "moe_dispatch np=4" "${MPIRUN[@]}" -np 4 python3 ch11-comm-libs/11-comm-libs/moe_dispatch.py
+export MASTER_PORT=29543
+run_logged "collective_contract np=3" "${MPIRUN[@]}" -np 3 python3 ch11-comm-libs/11-comm-libs/collective_contract.py
+export MASTER_PORT=29544
+run_logged "nccl_probe np=2" "${MPIRUN[@]}" -np 2 python3 ch11-comm-libs/11-comm-libs/nccl_probe.py
+run_logged "deepep_probe" python3 ch11-comm-libs/11-comm-libs/deepep_probe.py
 
 set +e
 python3 - << 'PY' >"$LOG" 2>&1

@@ -27,6 +27,7 @@ vector_indexed
 pingpong
 allreduce_bench
 blocking_vs_nonblocking
+moe_alltoall
 
 build/
 __pycache__/

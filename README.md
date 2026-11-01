@@ -49,6 +49,9 @@ mpi-tutorial/
 ├── ch10-fullstack-observe/        # 全链路观测实战
 │   ├── README.md
 │   └── 10-fullstack-observe/
+├── ch11-comm-libs/                # 通信库、NCCL、DeepEP、MoE
+│   ├── README.md
+│   └── 11-comm-libs/
 ├── docs/基础知识补充.md            # 勘误、缺失知识、实验怎么核对
 ├── scripts/verify.sh              # 编译并运行 CPU 可验证的实验
 └── results/VERIFICATION.md        # 最近一次验证的原始输出
@@ -67,7 +70,8 @@ mpi-tutorial/
 7. **[ch07-optimize](./ch07-optimize/)** - 调试优化：编译运行、调试、性能分析
 8. **[ch08-rdma-verbs](./ch08-rdma-verbs/)** - RDMA Verbs 编程
 9. **[ch09-kubernetes-pytorchjob](./ch09-kubernetes-pytorchjob/)** - Kubernetes 部署
-10. **[ch10-fullstack-observe](./ch10-fullstack-observe/)** - 全链路观测实战 ⭐ NEW
+10. **[ch10-fullstack-observe](./ch10-fullstack-observe/)** - 全链路观测实战
+11. **[ch11-comm-libs](./ch11-comm-libs/)** - 通信库、NCCL、DeepEP 与 MoE 的 dispatch/combine
 
 ## 快速开始
 
